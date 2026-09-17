@@ -6,16 +6,22 @@ export interface AttachmentRequest { prompt: string; images: ImageContent[] }
 const discordAttachmentHosts = new Set(['cdn.discordapp.com', 'media.discordapp.net']);
 const textExtensions = new Set(['md', 'txt', 'csv', 'json', 'yaml', 'yml', 'xml', 'html', 'css', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'cs', 'go', 'rs', 'php', 'rb', 'swift', 'kt', 'kts', 'dart', 'lua', 'r', 'sql', 'sh', 'bash', 'ps1', 'ini', 'toml', 'log']);
 const imageTypes = new Map<string, ImageContent['mediaType']>([['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'], ['png', 'image/png'], ['gif', 'image/gif'], ['webp', 'image/webp']]);
+const supportedImageTypes = new Set<ImageContent['mediaType']>(imageTypes.values());
 function extension(name: string): string { return name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? ''; }
+function declaredContentType(file: TextAttachment): string | undefined { return file.contentType?.split(';', 1)[0]?.trim().toLowerCase(); }
 function attachmentType(file: TextAttachment): { kind: 'text' } | { kind: 'image'; mediaType: ImageContent['mediaType'] } {
   const ext = extension(file.name); if (textExtensions.has(ext)) return { kind: 'text' };
   const mediaType = imageTypes.get(ext); if (mediaType) return { kind: 'image', mediaType };
+  const declaredType = declaredContentType(file) as ImageContent['mediaType'] | undefined;
+  // Clipboard images can arrive from Discord without a filename extension.
+  // The downloaded bytes are still checked by validateImage before use.
+  if (declaredType && supportedImageTypes.has(declaredType)) return { kind: 'image', mediaType: declaredType };
   throw new AppError('file_type');
 }
 function validateAttachment(file: TextAttachment, maxBytes: number) {
   const type = attachmentType(file);
   if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > maxBytes) throw new AppError('file_size');
-  const declaredType = file.contentType?.split(';', 1)[0]!.toLowerCase();
+  const declaredType = declaredContentType(file);
   if (declaredType && declaredType !== 'application/octet-stream' && (type.kind === 'image' ? declaredType !== type.mediaType : !declaredType.startsWith('text/') && !['application/json', 'application/xml'].includes(declaredType))) throw new AppError('file_type');
   try { const url = new URL(file.url); if (url.protocol !== 'https:' || !discordAttachmentHosts.has(url.hostname) || url.username || url.password || url.hash) throw new Error(); return { url, type }; }
   catch { throw new AppError('file_download'); }

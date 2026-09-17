@@ -1,4 +1,18 @@
 import { AppError } from '../utils/errors.js';
+// Only fixed categories and strictly formatted trace IDs; never log URLs, headers or bodies.
+function logHttpFailure(response: Response, requestHeaders: Record<string, string>): void {
+  const secrets = Object.values(requestHeaders).flatMap(value => [value, value.replace(/^Bearer\s+/i, '')]).filter(Boolean);
+  const trace = (name: string, pattern: RegExp) => {
+    const value = response.headers.get(name) ?? '';
+    return pattern.test(value) && !secrets.some(secret => value.includes(secret)) ? value : undefined;
+  };
+  console.log(JSON.stringify({
+    time: new Date().toISOString(), event: 'upstream_http_failed', status: response.status,
+    responseType: response.headers.get('content-type')?.toLowerCase().includes('json') ? 'json' : 'non_json',
+    cfRay: trace('cf-ray', /^[a-f0-9]{16}-[A-Z]{3}$/i),
+    requestId: trace('x-request-id', /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i),
+  }));
+}
 export function retryAfter(value: string | null, now = Date.now()): number | undefined {
   if (!value) return undefined;
   const seconds = /^\d+(\.\d+)?$/.test(value) ? Number(value) : (Date.parse(value) - now) / 1000;
@@ -10,10 +24,11 @@ export async function requestJson(url: string, headers: Record<string, string>, 
     const response = await transport(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal, redirect: 'error' });
     if (!response.ok) {
       const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+      logHttpFailure(response, headers);
       await response.body?.cancel();
       if (response.status === 429) throw new AppError('quota', retryAfter(response.headers.get('retry-after')));
       if (response.status === 413) throw new AppError('too_large');
-      if (response.status === 403 && !contentType.includes('json')) throw new AppError('gateway_blocked');
+      if (response.status === 403 && !contentType.includes('json')) throw new AppError('gateway_blocked', retryAfter(response.headers.get('retry-after')));
       if ([401, 403].includes(response.status)) throw new AppError('auth');
       if ([400, 404, 422].includes(response.status)) throw new AppError('model');
       throw new AppError('unavailable');

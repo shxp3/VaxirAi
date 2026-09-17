@@ -125,7 +125,8 @@ Custom เลือก API ใน `/setup provider` ได้สามแบบ:
 | `DATABASE_URL` | `./data/vaxir.sqlite`; เป็น **SQLite file path** ไม่ใช่ PostgreSQL URL |
 | `USER_RATE_LIMIT` | 5 requests ต่อผู้ใช้ ค่าเริ่มต้นของเซิร์ฟเวอร์ |
 | `RATE_WINDOW_SECONDS` | 60 วินาที |
-| `GLOBAL_RATE_LIMIT` | 60 requests ต่อช่วงเวลา รวมทุกเซิร์ฟเวอร์/provider |
+| `GLOBAL_RATE_LIMIT` | 20 requests ต่อช่วงเวลา รวมทุกเซิร์ฟเวอร์/provider |
+| `AI_REQUEST_INTERVAL_MS` | 3000 ms ระหว่างเริ่มคำขอที่ใช้ปลายทางและ API key เดียวกัน |
 | `CONTEXT_MESSAGE_LIMIT` | 20 ข้อความ สูงสุด 40 |
 | `MAX_PROMPT_CHARS` | 20000; ข้อความในช่อง slash command รับสูงสุด 6000 ตัวอักษร และไฟล์จะถูกนับรวมในขีดจำกัดนี้ |
 | `MAX_ATTACHMENT_BYTES` | 65536 bytes ต่อไฟล์; ตรวจทั้งขนาดที่ Discord แจ้งและข้อมูลที่ดาวน์โหลดจริง |
@@ -134,7 +135,7 @@ Custom เลือก API ใน `/setup provider` ได้สามแบบ:
 | `MAX_OUTPUT_TOKENS` | 1024 |
 | `MAX_RESPONSE_CHARS` | 12000; ตัดข้อความส่วนเกินและแบ่งส่งให้พอดี Discord |
 | `AI_TIMEOUT_MS` | 45000; สูงสุด 120000 |
-| `MAX_CONCURRENT_REQUESTS` | 8 |
+| `MAX_CONCURRENT_REQUESTS` | 2 รวมคำขอที่กำลังรอคิว AI |
 | `MEMORY_TTL_HOURS` | 168; ไม่โหลดบริบทที่หมดอายุ และเก็บกวาดเมื่อ start/ทุกชั่วโมง |
 | `MESSAGE_CONTENT_ENABLED` | `true` |
 | `BRAVE_SEARCH_API_KEY` | ว่าง = ปิด Search Grounding; ใส่ Brave Search Key เพื่อเปิดให้ทุกเซิร์ฟเวอร์ |
@@ -187,7 +188,11 @@ Dockerfile/Compose เตรียมไว้ แต่ยังไม่ได
 - Gateway ปิดด้วย privileged-intent error: ตรวจ Message Content Intent ใน Developer Portal หรือปิดฟีเจอร์ด้วย environment
 - mention ใช้ได้แต่ห้อง AI ไม่ตอบ: ตรวจ `/setup ai-channel`, enabled, Message Content Intent และสิทธิ์บอตในห้อง
 - key ใช้ไม่ได้: ตรวจ provider, key, สิทธิ์บัญชี และ model; การบันทึก setup ไม่ได้ตรวจ key จริงล่วงหน้า
-- quota/429: รอตาม Retry-After ถ้ามี หรือตรวจ quota ในบัญชี provider ไม่มีการสลับ key/provider เพื่อเลี่ยงโควตา
+- คำขอ AI ใช้คิวร่วมตาม origin ของ API และ key ข้ามเซิร์ฟเวอร์/โมเดลใน process เดียว ส่งทีละคำขอและเว้นระยะตาม `AI_REQUEST_INTERVAL_MS` คิวรับได้สูงสุด 8 คำขอรวมที่กำลังทำงาน เวลาเข้าคิวรวมอยู่ใน `AI_TIMEOUT_MS` และคำขอที่หมดเวลาก่อนส่งจะไม่เรียก API
+- quota/429: พักคิวที่ใช้ปลายทางและ key เดียวกันตาม Retry-After (สูงสุด 24 ชั่วโมง) หรือ 60 วินาทีถ้าไม่มี รวมถึง quota error ใน HTTP 200 คำขอที่รอคิวจะได้รับแจ้งเวลาพัก ไม่มีการ retry อัตโนมัติหรือสลับ key/provider เพื่อเลี่ยงโควตา
+- gateway_blocked: หมายถึง HTTP 403 ที่ไม่ใช่ JSON จากปลายทาง API ของ AI ไม่ใช่หลักฐานว่า Discord Gateway บล็อก พักคิว 5 นาทีหรือตาม Retry-After หากเกิดซ้ำให้ผู้ให้บริการตรวจสิทธิ์และ firewall
+- log `upstream_http_failed` เก็บเวลา, HTTP status, ประเภท JSON/non-JSON และ CF-Ray/UUID request ID ที่ผ่านการตรวจรูปแบบ ไม่เก็บ key, URL, prompt หรือ response body การลดความถี่ไม่รับประกันว่าจะผ่านกฎ firewall
+- คิวและเวลาพักอยู่ในหน่วยความจำและรีเซ็ตเมื่อรีสตาร์ต หากรันหลาย process/replica ต้องใช้ shared queue และ cooldown store เพื่อให้จำกัดร่วมกัน
 - custom config error: ตรวจว่า DNS ชี้ไป IP สาธารณะ ใช้ HTTPS port 443 โดยไม่มี query/credentials และตรง allowlist หากเจ้าของบอตตั้งไว้
 - ข้อความยาว: คำตอบแบ่งหลายข้อความและอาจตัดที่ MAX_RESPONSE_CHARS; code fence ข้ามข้อความอาจแสดงผลไม่ต่อเนื่อง
 - ล้างบริบทขณะมีคำขอ: รอคำตอบจบแล้วใช้ `/clear` อีกครั้ง

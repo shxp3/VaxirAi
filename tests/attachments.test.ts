@@ -57,6 +57,14 @@ test('downloads a valid image as transient base64 content', async t => {
   assert.equal(request.images[0]!.mediaType, 'image/png'); assert.deepEqual(Buffer.from(request.images[0]!.data, 'base64'), png); assert.match(request.prompt, /photo\.png/);
 });
 
+test('accepts a clipboard image without a filename extension using its MIME type', async t => {
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+  t.mock.method(globalThis, 'fetch', async () => new Response(png, { headers: { 'content-type': 'image/png' } }));
+  const request = await buildRequestWithAttachments('describe', [{ ...file, name: 'image', size: png.length, contentType: 'image/png; charset=binary' }], { ...options, maxImageBytes: 2048 });
+  assert.equal(request.images[0]!.mediaType, 'image/png');
+  assert.deepEqual(Buffer.from(request.images[0]!.data, 'base64'), png);
+});
+
 test('rejects a renamed or oversized image', async t => {
   t.mock.method(globalThis, 'fetch', async () => new Response('not an image'));
   const image = { ...file, name: 'fake.png', size: 12, contentType: 'image/png' };

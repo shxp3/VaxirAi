@@ -5,6 +5,7 @@ import { AppError } from '../utils/errors.js';
 import { RateLimiter } from '../rate-limit/limiter.js';
 import type { WebGrounder } from '../search/types.js';
 import { wantsSources } from '../search/brave.js';
+import { friendReply } from '../ai/friend-reply.js';
 export function defaultSettings(env: Env): GuildSettings {
   return { enabled: true, aiChannelId: null, userRateLimit: env.userRateLimit, contextMessageLimit: env.contextMessageLimit, ai: null, revision: 0 };
 }
@@ -34,9 +35,10 @@ export class Conversations {
       this.limiter.consume([{ key: `user:${c.userId}`, limit: settings.userRateLimit }, { key: 'global', limit: this.env.globalRateLimit }]);
       const limit = Math.floor(settings.contextMessageLimit / 2) * 2;
       const history = limit ? (await this.repository.getMessages(c, Date.now() - this.env.memoryTtlHours * 3600000)).slice(-limit) : [];
-      const grounding = grounder && (this.env.search.mode === 'always' || grounder.shouldSearch(prompt)) ? await grounder.search(prompt) : null;
+      const joke = images.length ? null : friendReply(prompt);
+      const grounding = !joke && grounder && (this.env.search.mode === 'always' || grounder.shouldSearch(prompt)) ? await grounder.search(prompt) : null;
       const groundedPrompt = grounding ? `${prompt}\n\n${grounding.context}` : prompt;
-      const generated = await provider.generate([...history, { role: 'user', content: groundedPrompt, ...(images.length ? { images } : {}) }], config, this.env);
+      const generated = joke ?? await provider.generate([...history, { role: 'user', content: groundedPrompt, ...(images.length ? { images } : {}) }], config, this.env);
       const sourceList = grounding?.sources.length && wantsSources(prompt) ? `\n\nแหล่งข้อมูลจากการค้นเว็บ:\n${grounding.sources.map(source => `- [${source.index}] <${source.url}>${source.title ? ` — ${source.title}` : ''}`).join('\n')}` : '';
       const response = generated + sourceList;
       if ((await this.settings(c.guildId)).revision !== settings.revision) throw new AppError('busy');

@@ -14,7 +14,7 @@ export function userError(error: unknown): string {
     file_count: 'แนบไฟล์มากเกินจำนวนที่บอตกำหนด กรุณาลดจำนวนไฟล์แล้วลองใหม่',
     file_download: 'ดาวน์โหลดไฟล์แนบจาก Discord ไม่สำเร็จ กรุณาแนบไฟล์ใหม่แล้วลองอีกครั้ง',
     file_encoding: 'อ่านไฟล์ไม่ได้ กรุณาบันทึกไฟล์ Markdown เป็น UTF-8 แล้วลองใหม่',
-    gateway_blocked: 'กรุณาลองใหม่อีกครั้ง เนื่องจากบอตถูก Discord Gateway บล็อกชั่วคราว (อาจเกิดจากการส่งคำขอเร็วเกินไป)',
+    gateway_blocked: 'ปลายทาง API ของ AI ปฏิเสธคำขอ บอตพักการส่งชั่วคราว หากยังเกิดซ้ำให้ผู้ดูแลตรวจสอบกับผู้ให้บริการ AI',
     too_large: 'ผู้ให้บริการ AI ปฏิเสธคำขอเพราะข้อมูลมีขนาดใหญ่เกินไป (อาจรวมบริบทหรือผลค้นเว็บ) ลองถามให้เจาะจงขึ้น หรือใช้ /clear แล้วถามใหม่ หากใช้ Groq Compound ให้ลองโมเดล groq/compound-mini',
     intent: 'ยังใช้ห้อง AI อัตโนมัติไม่ได้ เจ้าของบอตต้องเปิด Message Content Intent ใน Discord Developer Portal → Bot → Privileged Gateway Intents แล้วตั้ง MESSAGE_CONTENT_ENABLED=true และรีสตาร์ตบอต ระหว่างนี้ใช้ /ask หรือ @mention ได้',
     channel_permissions: 'บอตเข้าถึงห้องนี้ไม่ได้ กรุณาให้สิทธิ์ View Channel, Send Messages และ Read Message History ในห้องที่เลือก',

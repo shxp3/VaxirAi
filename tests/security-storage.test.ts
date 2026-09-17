@@ -48,6 +48,13 @@ test('SQLite persists across reopen, isolates history, expires and deletes it', 
   let repo = new SqliteRepository(path);
   try {
     const settings = defaultSettings(readEnv({}));
+    settings.enabled = false;
+    settings.aiChannelId = '123456789012345678';
+    settings.ai = {
+      provider: 'custom', model: 'persistent-model', encryptedKey: 'encrypted-value',
+      baseUrl: 'https://gateway.example/v1', apiFormat: 'responses',
+    };
+    settings.revision = 4;
     const c = { guildId: '1', channelId: '2', userId: '3' };
     await repo.saveSettings('1', settings);
     await repo.saveMessages(c, [{ role: 'user', content: 'hello' }], 100);
