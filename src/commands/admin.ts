@@ -3,6 +3,7 @@ import type { Env } from '../config/env.js';
 import { providerNames } from '../config/env.js';
 import type { ProviderName, ApiFormat, ProviderConfig } from '../ai/types.js';
 import { createProvider, customApiFormat } from '../ai/factory.js';
+import { queueCooldownForConfig, sharedQueue, queuedProvider } from '../ai/request-queue.js';
 import type { Secrets } from '../config/secrets.js';
 import type { Conversations } from '../memory/conversations.js';
 import { AppError } from '../utils/errors.js';
@@ -41,7 +42,24 @@ export class AdminCommands {
         const promptLimitMiB = (this.env.maxPromptChars / 1048576).toFixed(2).replace(/\.00$/, '');
         const personality = settings.instructions?.trim() ? 'Configured' : 'Default';
         const search = `${searchProvider}\nAttachment Limit: ${attachmentLimitMiB} MiB/file\nPrompt Limit: ${promptLimitMiB} MiB\nPersonality: ${personality}`;
-        await i.editReply({ content: `Vaxir AI\nProvider: ${ai.provider}\nModel: ${model}${api}\nWeb Search: ${search}\nAI Channel: ${settings.aiChannelId ? `<#${settings.aiChannelId}>` : 'ไม่ได้ตั้งค่า'}\nStatus: ${settings.enabled ? 'Enabled' : 'Disabled'} (ยังไม่ได้ตรวจ provider)\nRate Limit: ${settings.userRateLimit} / ${this.env.rateWindowSeconds} วินาที\nMemory: ${settings.contextMessageLimit} ข้อความ\nSource: ${settings.ai ? 'Server' : 'Default'}`, allowedMentions: { parse: [] } }); return;
+        let cooldownText = 'Cooldown: none';
+        try {
+          const apiKey = settings.ai ? this.secrets.decrypt(settings.ai.encryptedKey, id) : this.env.defaultAI.apiKey;
+          if (apiKey) {
+            const probe: ProviderConfig = { provider: ai.provider, model: ai.model || 'probe', apiKey, baseUrl: (ai as ProviderConfig).baseUrl, apiFormat: (ai as ProviderConfig).apiFormat };
+            const cooldown = queueCooldownForConfig(probe);
+            if (cooldown) cooldownText = `Cooldown: ${cooldown.code} (ลองอีกครั้งใน ${cooldown.seconds} วินาที)`;
+          }
+        } catch { /* Never leak key errors in status; fall back to none. */ }
+        await i.editReply({ content: `Vaxir AI\nProvider: ${ai.provider}\nModel: ${model}${api}\nWeb Search: ${search}\nAI Channel: ${settings.aiChannelId ? `<#${settings.aiChannelId}>` : 'ไม่ได้ตั้งค่า'}\nStatus: ${settings.enabled ? 'Enabled' : 'Disabled'} (ยังไม่ได้ตรวจ provider)\n${cooldownText}\nRate Limit: ${settings.userRateLimit} / ${this.env.rateWindowSeconds} วินาที\nMemory: ${settings.contextMessageLimit} ข้อความ\nSource: ${settings.ai ? 'Server' : 'Default'}`, allowedMentions: { parse: [] } }); return;
+      }
+      if (i.isChatInputCommand() && i.commandName === 'usage') {
+        const snap = this.conversations.usageSnapshot();
+        const guildEntry = (snap.byGuild as Record<string, { requests: number; quota: number }>)[id];
+        const top = Object.entries(snap.byGuild).sort((a, b) => b[1].requests - a[1].requests).slice(0, 5)
+          .map(([guildId, stat]) => `${guildId.slice(0, 6)}…: ${stat.requests} req, ${stat.quota} quota`).join('\n') || 'ยังไม่มีข้อมูล';
+        const errors = Object.entries(snap.byCode).map(([code, count]) => `${code}: ${count}`).join(', ') || 'none';
+        await i.editReply({ content: `Vaxir AI usage (in-memory ตั้งแต่รีสตาร์ต)\nRequests: ${snap.requests} / Success: ${snap.successes}\nErrors: ${errors}\nActive provider cooldowns: ${sharedQueue.activeCooldowns()}\nThis server: ${guildEntry ? `${guildEntry.requests} req, ${guildEntry.quota} quota` : 'ยังไม่มีข้อมูล'}\nTop guilds:\n${top}\nSpend: ดูที่ OpenRouter/Groq/Gemini dashboard ของ key ที่ใช้งาน`, allowedMentions: { parse: [] } }); return;
       }
       if (i.isModalSubmit()) {
         const provider = i.fields.getTextInputValue('provider').trim().toLowerCase() as ProviderName;
@@ -54,7 +72,13 @@ export class AdminCommands {
         if (!providerNames.includes(provider) || !model || model.length > 200 || !/^[\w./:@+-]+$/.test(model) || !apiKey || apiKey.length > 500 || /[\r\n]/.test(apiKey)) throw new AppError('config');
         if (baseUrl && provider !== 'custom') throw new AppError('config');
         const format = apiFormat ? apiFormat as ApiFormat : undefined;
-        createProvider({ provider, model, apiKey, baseUrl, apiFormat: format }, this.env.customAllowedBaseUrls);
+        const testConfig: ProviderConfig = { provider, model, apiKey, baseUrl, apiFormat: format };
+        const testProvider = createProvider(testConfig, this.env.customAllowedBaseUrls);
+        await queuedProvider(testProvider, this.env.providerRequestIntervalMs).generate(
+          [{ role: 'user', content: 'Reply with OK.' }],
+          testConfig,
+          { timeoutMs: Math.min(this.env.timeoutMs, 15000), maxOutputTokens: 16, maxResponseChars: 200 },
+        );
         settings.ai = { provider, model, encryptedKey: this.secrets.encrypt(apiKey, id), ...(provider === 'custom' ? { baseUrl, apiFormat: format } : {}) };
       } else {
         switch (i.options.getSubcommand()) {
@@ -91,7 +115,7 @@ export class AdminCommands {
       settings.revision++;
       await this.conversations.repository.saveSettings(id, settings);
       await this.conversations.repository.clearGuildMessages(id);
-      await i.editReply('บันทึกการตั้งค่าแล้ว และล้างบริบทเดิมของเซิร์ฟเวอร์เพื่อเริ่มใช้การตั้งค่าใหม่ (ยังไม่ได้ทดสอบการเชื่อมต่อ provider)');
+      await i.editReply('บันทึกการตั้งค่าแล้ว ตรวจการเชื่อมต่อ provider สำเร็จ และล้างบริบทเดิมของเซิร์ฟเวอร์แล้ว');
     } finally { this.updating.delete(id); }
   }
 }

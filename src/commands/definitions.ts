@@ -5,7 +5,10 @@ export const commands = [
   new SlashCommandBuilder().setName('ask').setDescription('ถาม Vaxir AI').setContexts(InteractionContextType.Guild)
     .addStringOption(o => o.setName('message').setDescription('ข้อความที่ต้องการถาม (เว้นว่างได้เมื่อแนบไฟล์)').setMaxLength(6000))
     .addAttachmentOption(o => o.setName('file').setDescription('รูปภาพหรือไฟล์ข้อความ/โค้ดที่ต้องการให้ AI อ่าน')),
-  new SlashCommandBuilder().setName('clear').setDescription('ล้างบทสนทนาของคุณในห้องนี้').setContexts(InteractionContextType.Guild).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('clear').setDescription('ล้างบทสนทนาของคุณในห้องนี้').setContexts(InteractionContextType.Guild),
+  new SlashCommandBuilder().setName('regenerate').setDescription('ตอบคำถามล่าสุดใหม่อีกครั้ง').setContexts(InteractionContextType.Guild),
+  new SlashCommandBuilder().setName('summarize').setDescription('สรุปบทสนทนาของคุณในห้องนี้').setContexts(InteractionContextType.Guild),
+  new SlashCommandBuilder().setName('usage').setDescription('สถิติการใช้งาน AI (แอดมิน)').setContexts(InteractionContextType.Guild).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('status').setDescription('สถานะและการตั้งค่า AI').setContexts(InteractionContextType.Guild),
   new SlashCommandBuilder().setName('setup').setDescription('ตั้งค่า Vaxir AI').setContexts(InteractionContextType.Guild).setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addSubcommand(s => s.setName('provider').setDescription('ตั้งค่า provider และ API Key ผ่านแบบฟอร์มส่วนตัว'))

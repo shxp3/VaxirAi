@@ -77,11 +77,15 @@ test('admin commands reject regular users before touching settings', async () =>
   await admin.handle({ inGuild: () => true, isChatInputCommand: () => true, commandName: 'setup', memberPermissions: { has: () => false }, reply: async (value: any) => { reply = value; } } as any);
   assert.ok(reply.content.includes('ผู้ดูแล')); assert.equal(await repo.getSettings('1'), null);
   assert.equal(isAdmin(null), false);
-  for (const command of commands.filter(c => ['setup', 'clear', 'server-plan'].includes(c.name))) {
+  for (const command of commands.filter(c => ['setup', 'usage', 'server-plan'].includes(c.name))) {
     assert.equal(command.toJSON().default_member_permissions, PermissionFlagsBits.Administrator.toString());
   }
+  for (const command of commands.filter(c => ['ask', 'status', 'clear', 'regenerate', 'summarize'].includes(c.name))) {
+    assert.equal(command.toJSON().default_member_permissions, undefined);
+  }
 });
-test('setup encrypts keys and status omits them', async () => {
+test('setup encrypts keys and status omits them', async t => {
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ candidates: [{ content: { parts: [{ text: 'OK' }] } }] }));
   const env = readEnv({}); const repo = new InMemoryRepository();
   const service = new Conversations(repo, env, () => { throw new Error(); });
   const secrets = new Secrets(randomBytes(32).toString('base64'));

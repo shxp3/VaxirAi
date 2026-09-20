@@ -22,6 +22,21 @@ export function providerQueueKey(config: ProviderConfig): string {
 export class ProviderRequestQueue {
   private buckets = new Map<string, Bucket>();
 
+  cooldown(key: string): { code: 'quota' | 'gateway_blocked'; seconds: number } | null {
+    const bucket = this.buckets.get(key);
+    if (!bucket) return null;
+    const remainingMs = bucket.blockedUntil - Date.now();
+    if (remainingMs <= 0) return null;
+    return { code: bucket.blockedCode, seconds: Math.ceil(remainingMs / 1000) };
+  }
+
+  activeCooldowns(): number {
+    const now = Date.now();
+    let count = 0;
+    for (const bucket of this.buckets.values()) if (bucket.blockedUntil > now) count++;
+    return count;
+  }
+
   async run<T>(key: string, timeoutMs: number, intervalMs: number, task: (remainingMs: number) => Promise<T>): Promise<T> {
     const now = Date.now();
     for (const [id, bucket] of this.buckets) {
@@ -71,7 +86,10 @@ export class ProviderRequestQueue {
   }
 }
 
-const sharedQueue = new ProviderRequestQueue();
+export const sharedQueue = new ProviderRequestQueue();
+export function queueCooldownForConfig(config: ProviderConfig): { code: 'quota' | 'gateway_blocked'; seconds: number } | null {
+  try { return sharedQueue.cooldown(providerQueueKey(config)); } catch { return null; }
+}
 export function queuedProvider(provider: AIProvider, intervalMs = 3000, queue = sharedQueue): AIProvider {
   const generate: AIProvider['generate'] = (messages, config, settings) => queue.run(providerQueueKey(config), settings.timeoutMs, intervalMs,
     remainingMs => provider.generate(messages, config, { ...settings, timeoutMs: remainingMs }));

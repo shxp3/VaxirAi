@@ -19,17 +19,22 @@ function fixture(generate: () => Promise<string>) {
   return { client, service, repo };
 }
 
-test('regular users cannot clear memory or invoke admin commands', async () => {
+test('regular users can use personal commands but not admin commands', async () => {
   const { client, service } = fixture(async () => { throw new Error('unexpected AI call'); });
-  service.clear = async () => { throw new Error('must not clear'); };
+  let cleared = 0;
+  service.clear = async () => { cleared++; };
   const handler = client.listeners(Events.InteractionCreate)[0] as (value: any) => Promise<void>;
   try {
-    for (const commandName of ['clear', 'setup']) {
+    for (const commandName of ['setup', 'usage']) {
       let reply: any;
       await handler({ isChatInputCommand: () => true, isModalSubmit: () => false, inGuild: () => true,
         commandName, memberPermissions: { has: () => false }, reply: async (p: any) => { reply = p; } });
       assert.match(reply.content, /ผู้ใช้ทั่วไปใช้ได้เฉพาะ/);
     }
+    await handler({ isChatInputCommand: () => true, isModalSubmit: () => false, inGuild: () => true,
+      commandName: 'clear', guildId: '1', channelId: '2', user: { id: '3' }, memberPermissions: { has: () => false },
+      deferReply: async () => {}, editReply: async () => {}, });
+    assert.equal(cleared, 1);
   } finally { client.destroy(); }
 });
 test('ask defers before generation and splits replies with mentions disabled', async () => {
