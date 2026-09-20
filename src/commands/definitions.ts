@@ -5,6 +5,13 @@ export const commands = [
   new SlashCommandBuilder().setName('ask').setDescription('ถาม Vaxir AI').setContexts(InteractionContextType.Guild)
     .addStringOption(o => o.setName('message').setDescription('ข้อความที่ต้องการถาม (เว้นว่างได้เมื่อแนบไฟล์)').setMaxLength(6000))
     .addAttachmentOption(o => o.setName('file').setDescription('รูปภาพหรือไฟล์ข้อความ/โค้ดที่ต้องการให้ AI อ่าน')),
+  new SlashCommandBuilder().setName('imagine').setDescription('สร้างหรือแต่งรูปภาพ (แนบรูปเพื่อสั่งแก้ไข)').setContexts(InteractionContextType.Guild)
+    .addStringOption(o => o.setName('prompt').setDescription('คำอธิบายรูปที่ต้องการ (สูงสุด 1000 ตัวอักษร)').setRequired(true).setMaxLength(1000))
+    .addAttachmentOption(o => o.setName('image').setDescription('รูปต้นฉบับที่ต้องการแก้ไข (JPG/PNG/GIF/WebP)'))
+    .addStringOption(o => o.setName('aspect').setDescription('สัดส่วนภาพ').addChoices(
+      { name: '1:1', value: '1:1' }, { name: '16:9', value: '16:9' }, { name: '9:16', value: '9:16' },
+      { name: '4:3', value: '4:3' }, { name: '3:4', value: '3:4' },
+    )),
   new SlashCommandBuilder().setName('clear').setDescription('ล้างบทสนทนาของคุณในห้องนี้').setContexts(InteractionContextType.Guild),
   new SlashCommandBuilder().setName('regenerate').setDescription('ตอบคำถามล่าสุดใหม่อีกครั้ง').setContexts(InteractionContextType.Guild),
   new SlashCommandBuilder().setName('summarize').setDescription('สรุปบทสนทนาของคุณในห้องนี้').setContexts(InteractionContextType.Guild),
@@ -12,7 +19,9 @@ export const commands = [
   new SlashCommandBuilder().setName('status').setDescription('สถานะและการตั้งค่า AI').setContexts(InteractionContextType.Guild),
   new SlashCommandBuilder().setName('setup').setDescription('ตั้งค่า Vaxir AI').setContexts(InteractionContextType.Guild).setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addSubcommand(s => s.setName('provider').setDescription('ตั้งค่า provider และ API Key ผ่านแบบฟอร์มส่วนตัว'))
+    .addSubcommand(s => s.setName('image').setDescription('ตั้งค่าโมเดลรูปภาพ OpenRouter ผ่านแบบฟอร์มส่วนตัว'))
     .addSubcommand(s => s.setName('reset-provider').setDescription('ลบ API Key ของเซิร์ฟเวอร์และใช้ค่าเริ่มต้น'))
+    .addSubcommand(s => s.setName('reset-image').setDescription('ลบโมเดลรูปภาพของเซิร์ฟเวอร์และใช้ค่าเริ่มต้น'))
     .addSubcommand(s => s.setName('instructions').setDescription('กำหนดบุคลิก AI สำหรับเซิร์ฟเวอร์')
       .addStringOption(o => o.setName('text').setDescription('บุคลิกและรูปแบบการตอบ สูงสุด 4,000 ตัวอักษร').setMaxLength(4000))
       .addAttachmentOption(o => o.setName('file').setDescription('ไฟล์ Markdown หรือไฟล์ข้อความสำหรับ Instructions')))

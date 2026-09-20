@@ -80,7 +80,7 @@ test('admin commands reject regular users before touching settings', async () =>
   for (const command of commands.filter(c => ['setup', 'usage', 'server-plan'].includes(c.name))) {
     assert.equal(command.toJSON().default_member_permissions, PermissionFlagsBits.Administrator.toString());
   }
-  for (const command of commands.filter(c => ['ask', 'status', 'clear', 'regenerate', 'summarize'].includes(c.name))) {
+  for (const command of commands.filter(c => ['ask', 'status', 'clear', 'regenerate', 'summarize', 'imagine'].includes(c.name))) {
     assert.equal(command.toJSON().default_member_permissions, undefined);
   }
 });
@@ -93,7 +93,7 @@ test('setup encrypts keys and status omits them', async t => {
   const replies: unknown[] = [];
   const base = { inGuild: () => true, guildId: '1', memberPermissions: { has: () => true }, deferReply: async () => {}, editReply: async (value: unknown) => { replies.push(value); } };
   const fields: Record<string, string> = { provider: 'gemini', model: 'test-model', key: 'a-secret-key', base: '' };
-  await admin.handle({ ...base, isChatInputCommand: () => false, isModalSubmit: () => true, fields: { getTextInputValue: (id: string) => fields[id] } } as any);
+  await admin.handle({ ...base, isChatInputCommand: () => false, isModalSubmit: () => true, customId: 'vaxir-provider', fields: { getTextInputValue: (id: string) => fields[id] } } as any);
   const stored = await repo.getSettings('1'); assert.ok(stored?.ai);
   assert.equal(secrets.decrypt(stored.ai.encryptedKey, '1'), 'a-secret-key');
   assert.ok(!JSON.stringify(stored).includes('a-secret-key'));

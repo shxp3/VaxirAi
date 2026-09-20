@@ -52,6 +52,13 @@ export async function readTextAttachment(file: TextAttachment, maxBytes: number)
   if (item.type.kind !== 'text') throw new AppError('file_type');
   return decodeText(item.bytes);
 }
+export interface ImageAttachment { bytes: Buffer; mediaType: ImageContent['mediaType']; url: string }
+export async function readImageAttachment(file: TextAttachment, maxBytes: number): Promise<ImageAttachment> {
+  const item = await download(file, maxBytes);
+  if (item.type.kind !== 'image') throw new AppError('file_type');
+  validateImage(item.bytes, item.type.mediaType);
+  return { bytes: item.bytes, mediaType: item.type.mediaType, url: file.url };
+}
 export async function buildRequestWithAttachments(question: string, attachments: Iterable<TextAttachment>, options: { maxAttachments: number; maxAttachmentBytes: number; maxImageBytes?: number; maxPromptChars: number }): Promise<AttachmentRequest> {
   const files = [...attachments]; if (files.length > options.maxAttachments) throw new AppError('file_count'); if (!question.trim() && files.length === 0) throw new AppError('input');
   const downloaded = await Promise.all(files.map(async file => ({ file, ...await download(file, attachmentType(file).kind === 'image' ? options.maxImageBytes ?? options.maxAttachmentBytes : options.maxAttachmentBytes) })));

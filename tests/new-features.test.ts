@@ -103,7 +103,7 @@ test('setup validation rejects bad keys before saving', async t => {
   const admin = new AdminCommands(env, service, new Secrets(randomBytes(32).toString('base64')));
   const fields: Record<string, string> = { provider: 'groq', model: 'llama-test', key: 'bad-key', base: '', format: '' };
   await assert.rejects(admin.handle({ inGuild: () => true, guildId: '99', memberPermissions: { has: () => true },
-    isChatInputCommand: () => false, isModalSubmit: () => true,
+    isChatInputCommand: () => false, isModalSubmit: () => true, customId: 'vaxir-provider',
     fields: { getTextInputValue: (id: string) => fields[id] ?? '' },
     deferReply: async () => {}, editReply: async () => {} } as any), { code: 'auth' });
   assert.equal(await repo.getSettings('99'), null);

@@ -1,5 +1,6 @@
 import { readEnv } from './config/env.js';
 import { resolveAI } from './config/resolve-ai.js';
+import { resolveImage } from './config/resolve-image.js';
 import { SqliteRepository } from './database/sqlite.js';
 import { Secrets } from './config/secrets.js';
 import { AdminCommands } from './commands/admin.js';
@@ -12,7 +13,7 @@ async function main() {
   if (!env.token) throw new AppError('config');
   const secrets = new Secrets(env.encryptionKey);
   const repository = new SqliteRepository(env.databaseUrl);
-  const conversations = new Conversations(repository, env, (settings, guildId) => resolveAI(env, secrets, settings, guildId));
+  const conversations = new Conversations(repository, env, (settings, guildId) => resolveAI(env, secrets, settings, guildId), (settings, guildId) => resolveImage(env, secrets, settings, guildId));
   const client = createBot(env, conversations, new AdminCommands(env, conversations, secrets), new ServerPlans(env, conversations, secrets));
   const prune = () => repository.prune(Date.now() - env.memoryTtlHours * 3600000).catch(error => safeLog('maintenance_failed', error));
   await prune();

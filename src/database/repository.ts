@@ -3,6 +3,7 @@ export interface GuildSettings {
   enabled: boolean; aiChannelId: string | null; userRateLimit: number; contextMessageLimit: number;
   instructions?: string;
   ai: { provider: ProviderName; model: string; encryptedKey: string; baseUrl?: string; apiFormat?: ApiFormat } | null;
+  image?: { provider: 'openrouter' | 'pollinations'; model: string; encryptedKey: string } | null;
   revision: number;
 }
 export interface Conversation { guildId: string; channelId: string; userId: string }

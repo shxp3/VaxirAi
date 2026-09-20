@@ -9,6 +9,10 @@ import type { Conversations } from '../memory/conversations.js';
 import { AppError } from '../utils/errors.js';
 import { readTextAttachment, type TextAttachment } from '../bot/attachments.js';
 export function isAdmin(permissions: { has(permission: bigint): boolean } | null): boolean { return permissions?.has(PermissionFlagsBits.Administrator) ?? false; }
+/** Optional modal fields may be absent from the submit payload; never let a missing field throw a raw error. */
+function modalText(fields: { getTextInputValue(id: string): string }, id: string): string {
+  try { return fields.getTextInputValue(id) ?? ''; } catch { return ''; }
+}
 export class AdminCommands {
   private updating = new Set<string>();
   constructor(private env: Env, private conversations: Conversations, private secrets: Secrets) {}
@@ -23,6 +27,15 @@ export class AdminCommands {
         ['model', 'Model ID', true, 200], ['key', 'API Key (ไม่แสดงในแชต)', true, 500],
         ['base', 'API Gateway URL เช่น https://host/v1', false, 300],
         ['format', 'API: chat / responses / messages (auto=ว่าง)', false, 20],
+      ] as const) modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId(id).setLabel(label).setStyle(TextInputStyle.Short).setRequired(required).setMaxLength(max)));
+      await i.showModal(modal); return;
+    }
+    if (i.isChatInputCommand() && i.commandName === 'setup' && i.options.getSubcommand() === 'image') {
+      const modal = new ModalBuilder().setCustomId('vaxir-image').setTitle('Vaxir AI image');
+      for (const [id, label, required, max] of [
+        ['provider', 'openrouter (paid) / pollinations (free)', true, 20],
+        ['model', 'Image Model เช่น flux, seedream', true, 200],
+        ['key', 'API Key (ว่างได้สำหรับ pollinations ฟรี)', false, 500],
       ] as const) modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId(id).setLabel(label).setStyle(TextInputStyle.Short).setRequired(required).setMaxLength(max)));
       await i.showModal(modal); return;
     }
@@ -51,7 +64,9 @@ export class AdminCommands {
             if (cooldown) cooldownText = `Cooldown: ${cooldown.code} (ลองอีกครั้งใน ${cooldown.seconds} วินาที)`;
           }
         } catch { /* Never leak key errors in status; fall back to none. */ }
-        await i.editReply({ content: `Vaxir AI\nProvider: ${ai.provider}\nModel: ${model}${api}\nWeb Search: ${search}\nAI Channel: ${settings.aiChannelId ? `<#${settings.aiChannelId}>` : 'ไม่ได้ตั้งค่า'}\nStatus: ${settings.enabled ? 'Enabled' : 'Disabled'} (ยังไม่ได้ตรวจ provider)\n${cooldownText}\nRate Limit: ${settings.userRateLimit} / ${this.env.rateWindowSeconds} วินาที\nMemory: ${settings.contextMessageLimit} ข้อความ\nSource: ${settings.ai ? 'Server' : 'Default'}`, allowedMentions: { parse: [] } }); return;
+        const imageModel = settings.image?.model.replace(/[\r\n`<>@]/g, '').slice(0, 150) || this.env.defaultImage.model || (this.env.imageProvider === 'pollinations' ? 'flux' : '(ยังไม่ตั้งค่า)');
+        const imageProvider = settings.image?.provider ?? this.env.imageProvider;
+        await i.editReply({ content: `Vaxir AI\nProvider: ${ai.provider}\nModel: ${model}${api}\nImage: ${imageProvider}/${imageModel}\nWeb Search: ${search}\nAI Channel: ${settings.aiChannelId ? `<#${settings.aiChannelId}>` : 'ไม่ได้ตั้งค่า'}\nStatus: ${settings.enabled ? 'Enabled' : 'Disabled'} (ยังไม่ได้ตรวจ provider)\n${cooldownText}\nRate Limit: ${settings.userRateLimit} / ${this.env.rateWindowSeconds} วินาที\nMemory: ${settings.contextMessageLimit} ข้อความ\nSource: ${settings.ai ? 'Server' : 'Default'}`, allowedMentions: { parse: [] } }); return;
       }
       if (i.isChatInputCommand() && i.commandName === 'usage') {
         const snap = this.conversations.usageSnapshot();
@@ -62,11 +77,26 @@ export class AdminCommands {
         await i.editReply({ content: `Vaxir AI usage (in-memory ตั้งแต่รีสตาร์ต)\nRequests: ${snap.requests} / Success: ${snap.successes}\nErrors: ${errors}\nActive provider cooldowns: ${sharedQueue.activeCooldowns()}\nThis server: ${guildEntry ? `${guildEntry.requests} req, ${guildEntry.quota} quota` : 'ยังไม่มีข้อมูล'}\nTop guilds:\n${top}\nSpend: ดูที่ OpenRouter/Groq/Gemini dashboard ของ key ที่ใช้งาน`, allowedMentions: { parse: [] } }); return;
       }
       if (i.isModalSubmit()) {
-        const provider = i.fields.getTextInputValue('provider').trim().toLowerCase() as ProviderName;
-        const model = i.fields.getTextInputValue('model').trim();
-        const apiKey = i.fields.getTextInputValue('key').trim();
-        const baseUrl = i.fields.getTextInputValue('base').trim() || undefined;
-        const apiFormat = (i.fields.getTextInputValue('format') ?? '').trim().toLowerCase();
+        if (i.customId !== 'vaxir-image' && i.customId !== 'vaxir-provider') return;
+        if (i.customId === 'vaxir-image') {
+          const providerRaw = modalText(i.fields, 'provider').trim().toLowerCase();
+          const provider = providerRaw === 'openrouter' ? 'openrouter' : providerRaw === 'pollinations' ? 'pollinations' : null;
+          const model = modalText(i.fields, 'model').trim();
+          const apiKey = modalText(i.fields, 'key').trim();
+          if (!provider || !model || model.length > 200 || !/^[\w./:@+-]+$/.test(model)) throw new AppError('config');
+          if (!apiKey || /[\r\n]/.test(apiKey) || apiKey.length > 500) {
+            if (provider === 'openrouter' || apiKey) throw new AppError('config');
+          }
+          settings.image = { provider, model, encryptedKey: apiKey ? this.secrets.encrypt(apiKey, id) : '' };
+          await this.conversations.repository.saveSettings(id, settings);
+          await i.editReply('บันทึกโมเดลรูปภาพแล้ว (ยังไม่ได้ทดสอบการเชื่อมต่อเพื่อเลี่ยงค่าใช้จ่าย)');
+          return;
+        }
+        const provider = modalText(i.fields, 'provider').trim().toLowerCase() as ProviderName;
+        const model = modalText(i.fields, 'model').trim();
+        const apiKey = modalText(i.fields, 'key').trim();
+        const baseUrl = modalText(i.fields, 'base').trim() || undefined;
+        const apiFormat = modalText(i.fields, 'format').trim().toLowerCase();
         if (apiFormat && !['chat', 'responses', 'messages'].includes(apiFormat)) throw new AppError('config');
         if (apiFormat && provider !== 'custom') throw new AppError('config');
         if (!providerNames.includes(provider) || !model || model.length > 200 || !/^[\w./:@+-]+$/.test(model) || !apiKey || apiKey.length > 500 || /[\r\n]/.test(apiKey)) throw new AppError('config');
@@ -83,6 +113,12 @@ export class AdminCommands {
       } else {
         switch (i.options.getSubcommand()) {
           case 'reset-provider': settings.ai = null; break;
+          case 'reset-image': {
+            settings.image = null;
+            await this.conversations.repository.saveSettings(id, settings);
+            await i.editReply('ลบโมเดลรูปภาพของเซิร์ฟเวอร์แล้ว กลับไปใช้ค่าเริ่มต้น');
+            return;
+          }
           case 'instructions': {
             const text = i.options.getString('text')?.trim();
             const file = i.options.getAttachment('file') as TextAttachment | null;

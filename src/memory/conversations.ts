@@ -6,10 +6,14 @@ import { RateLimiter } from '../rate-limit/limiter.js';
 import type { WebGrounder } from '../search/types.js';
 import { wantsSources } from '../search/brave.js';
 import { friendReply } from '../ai/friend-reply.js';
+import { OpenRouterImageProvider, PollinationsImageProvider, cleanAspectRatio, cleanImagePrompt, type GeneratedImage } from '../ai/images.js';
+import { ProviderRequestQueue, providerQueueKey } from '../ai/request-queue.js';
+import type { ImageConfig } from '../config/resolve-image.js';
 export function defaultSettings(env: Env): GuildSettings {
-  return { enabled: true, aiChannelId: null, userRateLimit: env.userRateLimit, contextMessageLimit: env.contextMessageLimit, instructions: '', ai: null, revision: 0 };
+  return { enabled: true, aiChannelId: null, userRateLimit: env.userRateLimit, contextMessageLimit: env.contextMessageLimit, instructions: '', ai: null, image: null, revision: 0 };
 }
 export type ResolveAI = (settings: GuildSettings, guildId: string) => { provider: AIProvider; config: ProviderConfig; grounder?: WebGrounder };
+export type ResolveImage = (settings: GuildSettings, guildId: string) => ImageConfig;
 export function assertAIChannel(settings: GuildSettings, channelId: string): void {
   if (settings.aiChannelId && settings.aiChannelId !== channelId) throw new AppError('wrong_ai_channel', undefined, settings.aiChannelId);
 }
@@ -20,7 +24,7 @@ export class Conversations {
   private usageSuccess = 0;
   private usageByCode = new Map<string, number>();
   private usageByGuild = new Map<string, { requests: number; quota: number }>();
-  constructor(readonly repository: Repository, readonly env: Env, private resolveAI: ResolveAI) { this.limiter = new RateLimiter(env.rateWindowSeconds * 1000); }
+  constructor(readonly repository: Repository, readonly env: Env, private resolveAI: ResolveAI, private resolveImage?: ResolveImage, private imageQueue?: ProviderRequestQueue, private imageProvider?: OpenRouterImageProvider) { this.limiter = new RateLimiter(env.rateWindowSeconds * 1000); }
   async settings(guildId: string) { return await this.repository.getSettings(guildId) ?? defaultSettings(this.env); }
   async assertChannel(guildId: string, channelId: string): Promise<void> { assertAIChannel(await this.settings(guildId), channelId); }
   get activeCount() { return this.active.size; }
@@ -145,6 +149,47 @@ export class Conversations {
       if ((await this.settings(c.guildId)).revision !== settings.revision) throw new AppError('busy');
       this.recordUsage(c.guildId, null);
       return response;
+    } finally { this.active.delete(key); }
+  }
+  async imagine(c: Conversation, prompt: string, aspectRatio?: string, references: { dataUrl: string; url: string }[] = []): Promise<GeneratedImage> {
+    const text = cleanImagePrompt(prompt);
+    const ratio = cleanAspectRatio(aspectRatio);
+    if (references.length > 4) throw new AppError('input');
+    const key = conversationKey(c);
+    if (this.active.has(key) || this.active.size >= this.env.maxConcurrentRequests) throw new AppError('busy');
+    this.active.add(key);
+    try {
+      const settings = await this.settings(c.guildId);
+      if (!settings.enabled) throw new AppError('disabled');
+      assertAIChannel(settings, c.channelId);
+      if (!this.resolveImage) throw new AppError('config');
+      let image: ImageConfig;
+      try { image = this.resolveImage(settings, c.guildId); } catch { throw new AppError('config'); }
+      if (!image.model || (image.provider === 'openrouter' && !image.apiKey)) throw new AppError('config');
+      try {
+        this.limiter.consume([{ key: `user:${c.userId}`, limit: settings.userRateLimit }, { key: 'global', limit: this.env.globalRateLimit }]);
+      } catch (error) {
+        this.recordUsage(c.guildId, error instanceof AppError ? error.code : 'limited');
+        throw error;
+      }
+      const queue = this.imageQueue ?? new ProviderRequestQueue();
+      const openRouter = this.imageProvider ?? new OpenRouterImageProvider();
+      const pollinations = new PollinationsImageProvider();
+      const timeoutMs = Math.min(120000, Math.max(this.env.timeoutMs, 90000));
+      const queueKey = image.provider === 'openrouter'
+        ? `image:openrouter:${providerQueueKey({ provider: 'openrouter', model: image.model, apiKey: image.apiKey })}`
+        : `image:pollinations:${image.model}`;
+      try {
+        const result = await queue.run(queueKey, timeoutMs, this.env.providerRequestIntervalMs, remainingMs =>
+          image.provider === 'openrouter'
+            ? openRouter.generate(text, image.model, image.apiKey, { aspectRatio: ratio, timeoutMs: remainingMs, references })
+            : pollinations.generate(text, image.model, image.apiKey, { aspectRatio: ratio, timeoutMs: remainingMs, references }));
+        this.recordUsage(c.guildId, null);
+        return result;
+      } catch (error) {
+        this.recordUsage(c.guildId, error instanceof AppError ? error.code : 'unavailable');
+        throw error;
+      }
     } finally { this.active.delete(key); }
   }
   async clear(c: Conversation) {

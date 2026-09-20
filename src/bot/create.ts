@@ -5,7 +5,7 @@ import { safeLog, userError } from '../utils/errors.js';
 import { prepareDiscordResponse } from '../utils/discord-response.js';
 import { removeBotMention, shouldRespond } from './routing.js';
 import { isAdmin, type AdminCommands } from '../commands/admin.js';
-import { buildRequestWithAttachments, type TextAttachment } from './attachments.js';
+import { buildRequestWithAttachments, readImageAttachment, type TextAttachment } from './attachments.js';
 import type { ServerPlans } from '../commands/server-plan.js';
 function startTypingLoop(channel: { sendTyping(): Promise<unknown> }): () => void {
   let stopped = false;
@@ -26,11 +26,11 @@ export function createBot(env: Env, conversations: Conversations, admin: AdminCo
     if ((!interaction.isChatInputCommand() && !interaction.isModalSubmit()) || !interaction.inGuild()) return;
     try {
       if (interaction.isModalSubmit()) {
-        if (interaction.customId === 'vaxir-provider') await admin.handle(interaction);
+        if (interaction.customId === 'vaxir-provider' || interaction.customId === 'vaxir-image') await admin.handle(interaction);
         return;
       }
-      if (!['ask', 'status', 'clear', 'regenerate', 'summarize'].includes(interaction.commandName) && !isAdmin(interaction.memberPermissions)) {
-        await interaction.reply({ content: 'ผู้ใช้ทั่วไปใช้ได้เฉพาะ /ask /clear /regenerate /summarize และ /status คำสั่งนี้ต้องเป็นผู้ดูแลเซิร์ฟเวอร์', flags: MessageFlags.Ephemeral }); return;
+      if (!['ask', 'status', 'clear', 'regenerate', 'summarize', 'imagine'].includes(interaction.commandName) && !isAdmin(interaction.memberPermissions)) {
+        await interaction.reply({ content: 'ผู้ใช้ทั่วไปใช้ได้เฉพาะ /ask /clear /regenerate /summarize /imagine และ /status คำสั่งนี้ต้องเป็นผู้ดูแลเซิร์ฟเวอร์', flags: MessageFlags.Ephemeral }); return;
       }
       if (['setup', 'status', 'usage'].includes(interaction.commandName)) { await admin.handle(interaction); return; }
       await interaction.deferReply({ flags: interaction.commandName === 'clear' ? MessageFlags.Ephemeral : undefined });
@@ -50,6 +50,25 @@ export function createBot(env: Env, conversations: Conversations, admin: AdminCo
         const parts = prepareDiscordResponse(await conversations.summarize(c));
         await interaction.editReply({ ...parts[0]!, allowedMentions: { parse: [] } });
         for (const part of parts.slice(1)) await interaction.followUp({ ...part, allowedMentions: { parse: [] } });
+        return;
+      }
+      if (interaction.commandName === 'imagine') {
+        await conversations.assertChannel(c.guildId, c.channelId);
+        const prompt = interaction.options.getString('prompt', true);
+        const aspect = interaction.options.getString('aspect') ?? undefined;
+        const file = interaction.options.getAttachment('image');
+        const references = file
+          ? await readImageAttachment(file as TextAttachment, env.maxImageBytes).then(img => [{
+              dataUrl: `data:${img.mediaType};base64,${img.bytes.toString('base64')}`,
+              url: img.url,
+            }])
+          : [];
+        const image = await conversations.imagine(c, prompt, aspect, references);
+        await interaction.editReply({
+          content: prompt.trim().slice(0, 1000),
+          files: [{ attachment: image.bytes, name: `imagine.${image.extension}` }],
+          allowedMentions: { parse: [] },
+        });
         return;
       }
       if (interaction.commandName !== 'ask') return;

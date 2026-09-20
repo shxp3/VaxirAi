@@ -14,6 +14,8 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env) {
   const searchCountry = (env.SEARCH_COUNTRY || 'ALL').trim().toUpperCase();
   const searchLanguage = (env.SEARCH_LANGUAGE || 'en').trim().toLowerCase();
   if (!providerNames.includes(provider as ProviderName)) throw new AppError('config');
+  const imageProvider = (env.IMAGE_PROVIDER || 'pollinations').trim().toLowerCase();
+  if (!['openrouter', 'pollinations'].includes(imageProvider)) throw new AppError('config');
   if (!['auto', 'always'].includes(searchMode) || !(searchCountry === 'ALL' || /^[A-Z]{2}$/.test(searchCountry)) || !/^[a-z]{2,3}(?:-[a-z]{2})?$/.test(searchLanguage)) throw new AppError('config');
   if (env.MESSAGE_CONTENT_ENABLED && !['true', 'false'].includes(env.MESSAGE_CONTENT_ENABLED)) throw new AppError('config');
   const maxAttachmentBytes = integer(env, 'MAX_ATTACHMENT_BYTES', 15728640, 1024, 33554432);
@@ -25,6 +27,9 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env) {
   return {
     token: env.DISCORD_TOKEN || '', clientId: env.DISCORD_CLIENT_ID || '', guildId: env.DISCORD_GUILD_ID || '',
     defaultAI: { provider: provider as ProviderName, model: env.DEFAULT_AI_MODEL?.trim() || '', apiKey: env.DEFAULT_AI_API_KEY?.trim() || '', baseUrl: env.DEFAULT_AI_BASE_URL?.trim() || undefined },
+    defaultImage: { model: env.DEFAULT_IMAGE_MODEL?.trim() || '', apiKey: env.DEFAULT_IMAGE_API_KEY?.trim() || env.DEFAULT_AI_API_KEY?.trim() || '' },
+    imageProvider: imageProvider as 'openrouter' | 'pollinations',
+    pollinationsKey: env.POLLINATIONS_API_KEY?.trim() || '',
     search: { apiKey: env.BRAVE_SEARCH_API_KEY?.trim() || '', mode: searchMode as 'auto' | 'always', country: searchCountry, language: searchLanguage },
     encryptionKey: env.ENCRYPTION_KEY || '', databaseUrl: env.DATABASE_URL || './data/vaxir.sqlite',
     userRateLimit: integer(env, 'USER_RATE_LIMIT', 5, 1, 100), rateWindowSeconds: integer(env, 'RATE_WINDOW_SECONDS', 60, 1, 3600),
