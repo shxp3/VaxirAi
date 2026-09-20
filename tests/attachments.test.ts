@@ -1,9 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPromptWithAttachments, buildRequestWithAttachments } from '../src/bot/attachments.js';
+import { buildPromptWithAttachments, buildRequestWithAttachments, readTextAttachment } from '../src/bot/attachments.js';
+import { readEnv } from '../src/config/env.js';
 
 const options = { maxAttachments: 3, maxAttachmentBytes: 1024, maxPromptChars: 5000 };
 const file = { name: 'notes.md', url: 'https://cdn.discordapp.com/attachments/1/2/notes.md?ex=signed', size: 12, contentType: 'text/markdown' };
+
+test('raises a stale prompt limit enough to accept one configured text attachment', () => {
+  const env = readEnv({ MAX_ATTACHMENT_BYTES: '15728640', MAX_PROMPT_CHARS: '20000' });
+  assert.equal(env.maxAttachmentBytes, 15728640);
+  assert.equal(env.maxPromptChars, 15794176);
+});
 
 test('downloads a Discord Markdown attachment and frames it as untrusted reference data', async t => {
   t.mock.method(globalThis, 'fetch', async (url: URL | string, init: RequestInit) => {
@@ -24,6 +31,11 @@ test('a Markdown attachment can be used without a separate question', async t =>
   assert.ok(prompt.includes('อ่านและสรุป'));
 });
 
+test('reads a Markdown attachment as raw instructions text', async t => {
+  t.mock.method(globalThis, 'fetch', async () => new Response('# Personality\nตอบแบบกระชับ'));
+  assert.equal(await readTextAttachment(file, 1024), '# Personality\nตอบแบบกระชับ');
+});
+
 test('rejects unsupported files, untrusted URLs, excess counts and invalid UTF-8', async t => {
   await assert.rejects(buildPromptWithAttachments('read', [{ ...file, name: 'secret.env' }], options), { code: 'file_type' });
   await assert.rejects(buildPromptWithAttachments('read', [{ ...file, url: 'https://example.com/notes.md' }], options), { code: 'file_download' });
@@ -38,6 +50,13 @@ test('enforces declared, streamed, and combined size limits', async t => {
   await assert.rejects(buildPromptWithAttachments('read', [file], options), { code: 'file_size' });
   globalThis.fetch = t.mock.fn(async () => new Response('x'.repeat(500)));
   await assert.rejects(buildPromptWithAttachments('q', [file], { ...options, maxPromptChars: 100 }), { code: 'file_size' });
+});
+
+test('allows a text attachment when its prompt is below the configured limit', async t => {
+  const content = 'x'.repeat(21 * 1024);
+  t.mock.method(globalThis, 'fetch', async () => new Response(content));
+  const prompt = await buildPromptWithAttachments('summarize', [{ ...file, size: Buffer.byteLength(content) }], { ...options, maxAttachmentBytes: 65536, maxPromptChars: 200000 });
+  assert.match(prompt, /x{100}/);
 });
 
 test('rejects an empty request with no attachment', async () => {

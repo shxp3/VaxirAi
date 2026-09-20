@@ -98,3 +98,14 @@ test('setup encrypts keys and status omits them', async () => {
   for (const command of commands.filter(c => ['ask', 'status'].includes(c.name))) assert.equal(command.toJSON().default_member_permissions, undefined);
   assert.ok(!JSON.stringify(replies).includes('a-secret-key')); assert.ok(!JSON.stringify(replies).includes(stored.ai.encryptedKey));
 });
+
+test('setup saves and resets server personality instructions', async () => {
+  const env = readEnv({}); const repo = new InMemoryRepository();
+  const service = new Conversations(repo, env, () => { throw new Error(); });
+  const admin = new AdminCommands(env, service, new Secrets(randomBytes(32).toString('base64')));
+  const base = { inGuild: () => true, guildId: '1', memberPermissions: { has: () => true }, isChatInputCommand: () => true, isModalSubmit: () => false, commandName: 'setup', deferReply: async () => {}, editReply: async () => {} };
+  await admin.handle({ ...base, options: { getSubcommand: () => 'instructions', getString: () => 'ตอบแบบโจรสลัด', getAttachment: () => null } } as any);
+  assert.equal((await repo.getSettings('1'))?.instructions, 'ตอบแบบโจรสลัด');
+  await admin.handle({ ...base, options: { getSubcommand: () => 'reset-instructions' } } as any);
+  assert.equal((await repo.getSettings('1'))?.instructions, '');
+});

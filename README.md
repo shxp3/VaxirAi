@@ -102,6 +102,9 @@ Custom เลือก API ใน `/setup provider` ได้สามแบบ:
 | --- | --- |
 | `/setup provider` | เปิด modal กรอก provider/model/key/base URL; ไม่ส่ง key เป็นข้อความในห้อง |
 | `/setup reset-provider` | ลบ key/config ของเซิร์ฟเวอร์ กลับไปใช้ default |
+| `/setup instructions text:...` | กำหนดบุคลิกและรูปแบบการตอบของ AI สำหรับเซิร์ฟเวอร์ (สูงสุด 4,000 ตัวอักษร) |
+| `/setup instructions file:instructions.md` | กำหนด Instructions จากไฟล์ Markdown/ข้อความ UTF-8 สูงสุดตาม `MAX_ATTACHMENT_BYTES` |
+| `/setup reset-instructions` | ล้างบุคลิกที่กำหนดและกลับไปใช้ค่าเริ่มต้น |
 | `/setup ai-channel channel:#ai-chat` | ตั้งห้อง AI; เว้น channel เพื่อลบการตั้งห้อง |
 | `/setup limits requests:5 context:20` | จำกัด requests ต่อช่วงเวลาที่เจ้าของบอตตั้ง และจำนวนข้อความความจำ |
 | `/setup enabled value:false` | ปิด AI ของเซิร์ฟเวอร์ |
@@ -128,8 +131,8 @@ Custom เลือก API ใน `/setup provider` ได้สามแบบ:
 | `GLOBAL_RATE_LIMIT` | 20 requests ต่อช่วงเวลา รวมทุกเซิร์ฟเวอร์/provider |
 | `AI_REQUEST_INTERVAL_MS` | 3000 ms ระหว่างเริ่มคำขอที่ใช้ปลายทางและ API key เดียวกัน |
 | `CONTEXT_MESSAGE_LIMIT` | 20 ข้อความ สูงสุด 40 |
-| `MAX_PROMPT_CHARS` | 20000; ข้อความในช่อง slash command รับสูงสุด 6000 ตัวอักษร และไฟล์จะถูกนับรวมในขีดจำกัดนี้ |
-| `MAX_ATTACHMENT_BYTES` | 65536 bytes ต่อไฟล์; ตรวจทั้งขนาดที่ Discord แจ้งและข้อมูลที่ดาวน์โหลดจริง |
+| `MAX_PROMPT_CHARS` | 16777216; ข้อความในช่อง slash command รับสูงสุด 6000 ตัวอักษร และไฟล์จะถูกนับรวมในขีดจำกัดนี้ |
+| `MAX_ATTACHMENT_BYTES` | 15728640 bytes (15 MiB) ต่อไฟล์; ตรวจทั้งขนาดที่ Discord แจ้งและข้อมูลที่ดาวน์โหลดจริง |
 | `MAX_IMAGE_BYTES` | 2097152 bytes ต่อรูป; Base64 ทำให้ request ที่ส่งไป provider ใหญ่กว่าขนาดไฟล์ |
 | `MAX_ATTACHMENTS` | 3 ไฟล์ต่อข้อความ; `/ask` รองรับช่องแนบหนึ่งไฟล์ ส่วนข้อความปกติรองรับตามค่านี้ |
 | `MAX_OUTPUT_TOKENS` | 1024 |

@@ -9,3 +9,10 @@ test('identity names the bot creator and current configured model without secret
   assert.match(instruction, /model ID "gpt-5\.6-luna"/);
   assert.doesNotMatch(instruction, /super-secret|secret-gateway/);
 });
+
+test('identity includes server personality without allowing it to replace core requirements', () => {
+  const instruction = identityInstruction({ provider: 'custom', model: 'test', apiKey: 'secret', instructions: 'ตอบแบบโจรสลัดและกระชับ' });
+  assert.match(instruction, /ตอบแบบโจรสลัดและกระชับ/);
+  assert.match(instruction, /when they do not conflict/);
+  assert.ok(instruction.indexOf('Never reveal API keys') < instruction.indexOf('ตอบแบบโจรสลัด'));
+});

@@ -16,6 +16,12 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env) {
   if (!providerNames.includes(provider as ProviderName)) throw new AppError('config');
   if (!['auto', 'always'].includes(searchMode) || !(searchCountry === 'ALL' || /^[A-Z]{2}$/.test(searchCountry)) || !/^[a-z]{2,3}(?:-[a-z]{2})?$/.test(searchLanguage)) throw new AppError('config');
   if (env.MESSAGE_CONTENT_ENABLED && !['true', 'false'].includes(env.MESSAGE_CONTENT_ENABLED)) throw new AppError('config');
+  const maxAttachmentBytes = integer(env, 'MAX_ATTACHMENT_BYTES', 15728640, 1024, 33554432);
+  const configuredMaxPromptChars = integer(env, 'MAX_PROMPT_CHARS', 16777216, 1, 67108864);
+  // A stale prompt setting must not make a valid text attachment impossible to
+  // use. UTF-8 text has no more characters than bytes; reserve 64 KiB for the
+  // user's question and the attachment framing added by the bot.
+  const maxPromptChars = Math.max(configuredMaxPromptChars, maxAttachmentBytes + 65536);
   return {
     token: env.DISCORD_TOKEN || '', clientId: env.DISCORD_CLIENT_ID || '', guildId: env.DISCORD_GUILD_ID || '',
     defaultAI: { provider: provider as ProviderName, model: env.DEFAULT_AI_MODEL?.trim() || '', apiKey: env.DEFAULT_AI_API_KEY?.trim() || '', baseUrl: env.DEFAULT_AI_BASE_URL?.trim() || undefined },
@@ -25,8 +31,8 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env) {
     globalRateLimit: integer(env, 'GLOBAL_RATE_LIMIT', 20, 1, 10000),
     providerRequestIntervalMs: integer(env, 'AI_REQUEST_INTERVAL_MS', 3000, 100, 60000),
     contextMessageLimit: integer(env, 'CONTEXT_MESSAGE_LIMIT', 20, 0, 40),
-    maxPromptChars: integer(env, 'MAX_PROMPT_CHARS', 20000, 1, 20000), maxOutputTokens: integer(env, 'MAX_OUTPUT_TOKENS', 1024, 1, 8192),
-    maxAttachmentBytes: integer(env, 'MAX_ATTACHMENT_BYTES', 65536, 1024, 1048576), maxAttachments: integer(env, 'MAX_ATTACHMENTS', 3, 1, 10),
+    maxPromptChars, maxOutputTokens: integer(env, 'MAX_OUTPUT_TOKENS', 1024, 1, 8192),
+    maxAttachmentBytes, maxAttachments: integer(env, 'MAX_ATTACHMENTS', 3, 1, 10),
     maxImageBytes: integer(env, 'MAX_IMAGE_BYTES', 2097152, 1024, 8388608),
     maxResponseChars: integer(env, 'MAX_RESPONSE_CHARS', 12000, 100, 20000), timeoutMs: integer(env, 'AI_TIMEOUT_MS', 45000, 100, 120000),
     maxConcurrentRequests: integer(env, 'MAX_CONCURRENT_REQUESTS', 2, 1, 100), memoryTtlHours: integer(env, 'MEMORY_TTL_HOURS', 168, 1, 8760),

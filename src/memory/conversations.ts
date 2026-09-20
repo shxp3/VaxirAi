@@ -7,7 +7,7 @@ import type { WebGrounder } from '../search/types.js';
 import { wantsSources } from '../search/brave.js';
 import { friendReply } from '../ai/friend-reply.js';
 export function defaultSettings(env: Env): GuildSettings {
-  return { enabled: true, aiChannelId: null, userRateLimit: env.userRateLimit, contextMessageLimit: env.contextMessageLimit, ai: null, revision: 0 };
+  return { enabled: true, aiChannelId: null, userRateLimit: env.userRateLimit, contextMessageLimit: env.contextMessageLimit, instructions: '', ai: null, revision: 0 };
 }
 export type ResolveAI = (settings: GuildSettings, guildId: string) => { provider: AIProvider; config: ProviderConfig; grounder?: WebGrounder };
 export function assertAIChannel(settings: GuildSettings, channelId: string): void {

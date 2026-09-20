@@ -6,6 +6,7 @@ import { createProvider, customApiFormat } from '../ai/factory.js';
 import type { Secrets } from '../config/secrets.js';
 import type { Conversations } from '../memory/conversations.js';
 import { AppError } from '../utils/errors.js';
+import { readTextAttachment, type TextAttachment } from '../bot/attachments.js';
 export function isAdmin(permissions: { has(permission: bigint): boolean } | null): boolean { return permissions?.has(PermissionFlagsBits.Administrator) ?? false; }
 export class AdminCommands {
   private updating = new Set<string>();
@@ -35,7 +36,11 @@ export class AdminCommands {
         // Only display explicitly selected non-secret fields; never serialize configuration.
         const model = ai.model.replace(/[\r\n`<>@]/g, '').slice(0, 150) || '(ยังไม่ตั้งค่า)';
         const api = ai.provider === 'custom' ? `\nAPI: ${customApiFormat(ai as ProviderConfig)}` : '';
-        const search = this.env.search.apiKey ? `Brave (${this.env.search.mode}, ${this.env.search.country}/${this.env.search.language})` : 'Disabled';
+        const searchProvider = this.env.search.apiKey ? `Brave (${this.env.search.mode}, ${this.env.search.country}/${this.env.search.language})` : 'Disabled';
+        const attachmentLimitMiB = (this.env.maxAttachmentBytes / 1048576).toFixed(2).replace(/\.00$/, '');
+        const promptLimitMiB = (this.env.maxPromptChars / 1048576).toFixed(2).replace(/\.00$/, '');
+        const personality = settings.instructions?.trim() ? 'Configured' : 'Default';
+        const search = `${searchProvider}\nAttachment Limit: ${attachmentLimitMiB} MiB/file\nPrompt Limit: ${promptLimitMiB} MiB\nPersonality: ${personality}`;
         await i.editReply({ content: `Vaxir AI\nProvider: ${ai.provider}\nModel: ${model}${api}\nWeb Search: ${search}\nAI Channel: ${settings.aiChannelId ? `<#${settings.aiChannelId}>` : 'ไม่ได้ตั้งค่า'}\nStatus: ${settings.enabled ? 'Enabled' : 'Disabled'} (ยังไม่ได้ตรวจ provider)\nRate Limit: ${settings.userRateLimit} / ${this.env.rateWindowSeconds} วินาที\nMemory: ${settings.contextMessageLimit} ข้อความ\nSource: ${settings.ai ? 'Server' : 'Default'}`, allowedMentions: { parse: [] } }); return;
       }
       if (i.isModalSubmit()) {
@@ -54,6 +59,16 @@ export class AdminCommands {
       } else {
         switch (i.options.getSubcommand()) {
           case 'reset-provider': settings.ai = null; break;
+          case 'instructions': {
+            const text = i.options.getString('text')?.trim();
+            const file = i.options.getAttachment('file') as TextAttachment | null;
+            if ((!text && !file) || (text && file)) throw new AppError('input');
+            const instructions = text ?? (await readTextAttachment(file!, this.env.maxAttachmentBytes)).trim();
+            if (!instructions || instructions.includes('\0')) throw new AppError('input');
+            settings.instructions = instructions;
+            break;
+          }
+          case 'reset-instructions': settings.instructions = ''; break;
           case 'enabled': settings.enabled = i.options.getBoolean('value', true); break;
           case 'ai-channel': {
             const channel = i.options.getChannel('channel');

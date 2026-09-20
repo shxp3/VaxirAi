@@ -1,6 +1,7 @@
 import type { Message, ProviderName, ApiFormat } from '../ai/types.js';
 export interface GuildSettings {
   enabled: boolean; aiChannelId: string | null; userRateLimit: number; contextMessageLimit: number;
+  instructions?: string;
   ai: { provider: ProviderName; model: string; encryptedKey: string; baseUrl?: string; apiFormat?: ApiFormat } | null;
   revision: number;
 }
