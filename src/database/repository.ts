@@ -6,7 +6,7 @@ export interface GuildSettings {
   image?: { provider: 'openrouter' | 'pollinations'; model: string; encryptedKey: string } | null;
   revision: number;
 }
-export interface Conversation { guildId: string; channelId: string; userId: string }
+export interface Conversation { guildId: string; channelId: string; userId: string; threadParentId?: string | null }
 export function conversationKey(c: Conversation): string { return `${c.guildId}:${c.channelId}:${c.userId}`; }
 export interface Repository {
   getSettings(guildId: string): Promise<GuildSettings | null>;

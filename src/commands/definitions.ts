@@ -15,6 +15,7 @@ export const commands = [
   new SlashCommandBuilder().setName('clear').setDescription('ล้างบทสนทนาของคุณในห้องนี้').setContexts(InteractionContextType.Guild),
   new SlashCommandBuilder().setName('regenerate').setDescription('ตอบคำถามล่าสุดใหม่อีกครั้ง').setContexts(InteractionContextType.Guild),
   new SlashCommandBuilder().setName('summarize').setDescription('สรุปบทสนทนาของคุณในห้องนี้').setContexts(InteractionContextType.Guild),
+  new SlashCommandBuilder().setName('help').setDescription('วิธีใช้ Vaxir AI และคำสั่งทั้งหมด').setContexts(InteractionContextType.Guild),
   new SlashCommandBuilder().setName('usage').setDescription('สถิติการใช้งาน AI (แอดมิน)').setContexts(InteractionContextType.Guild).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('status').setDescription('สถานะและการตั้งค่า AI').setContexts(InteractionContextType.Guild),
   new SlashCommandBuilder().setName('setup').setDescription('ตั้งค่า Vaxir AI').setContexts(InteractionContextType.Guild).setDefaultMemberPermissions(PermissionFlagsBits.Administrator)

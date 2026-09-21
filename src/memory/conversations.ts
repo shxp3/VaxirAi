@@ -14,8 +14,11 @@ export function defaultSettings(env: Env): GuildSettings {
 }
 export type ResolveAI = (settings: GuildSettings, guildId: string) => { provider: AIProvider; config: ProviderConfig; grounder?: WebGrounder };
 export type ResolveImage = (settings: GuildSettings, guildId: string) => ImageConfig;
-export function assertAIChannel(settings: GuildSettings, channelId: string): void {
-  if (settings.aiChannelId && settings.aiChannelId !== channelId) throw new AppError('wrong_ai_channel', undefined, settings.aiChannelId);
+export function assertAIChannel(settings: GuildSettings, channelId: string, threadParentId?: string | null): void {
+  if (!settings.aiChannelId) return;
+  if (channelId === settings.aiChannelId) return;
+  if (threadParentId && threadParentId === settings.aiChannelId) return;
+  throw new AppError('wrong_ai_channel', undefined, settings.aiChannelId);
 }
 export class Conversations {
   private active = new Set<string>();
@@ -26,7 +29,7 @@ export class Conversations {
   private usageByGuild = new Map<string, { requests: number; quota: number }>();
   constructor(readonly repository: Repository, readonly env: Env, private resolveAI: ResolveAI, private resolveImage?: ResolveImage, private imageQueue?: ProviderRequestQueue, private imageProvider?: OpenRouterImageProvider) { this.limiter = new RateLimiter(env.rateWindowSeconds * 1000); }
   async settings(guildId: string) { return await this.repository.getSettings(guildId) ?? defaultSettings(this.env); }
-  async assertChannel(guildId: string, channelId: string): Promise<void> { assertAIChannel(await this.settings(guildId), channelId); }
+  async assertChannel(guildId: string, channelId: string, threadParentId?: string | null): Promise<void> { assertAIChannel(await this.settings(guildId), channelId, threadParentId); }
   get activeCount() { return this.active.size; }
   usageSnapshot(): { requests: number; successes: number; byCode: Record<string, number>; byGuild: Record<string, { requests: number; quota: number }> } {
     return {
@@ -54,7 +57,7 @@ export class Conversations {
     try {
       const settings = await this.settings(c.guildId);
       if (!settings.enabled) throw new AppError('disabled');
-      assertAIChannel(settings, c.channelId);
+      assertAIChannel(settings, c.channelId, c.threadParentId);
       const { provider, config, grounder } = this.resolveAI(settings, c.guildId);
       if (!config.apiKey || !config.model) throw new AppError('config');
       try {
@@ -91,7 +94,7 @@ export class Conversations {
     try {
       const settings = await this.settings(c.guildId);
       if (!settings.enabled) throw new AppError('disabled');
-      assertAIChannel(settings, c.channelId);
+      assertAIChannel(settings, c.channelId, c.threadParentId);
       const { provider, config } = this.resolveAI(settings, c.guildId);
       if (!config.apiKey || !config.model) throw new AppError('config');
       try {
@@ -120,6 +123,53 @@ export class Conversations {
       return response;
     } finally { this.active.delete(key); }
   }
+  async editLast(c: Conversation, input: string, images: ImageContent[] = []): Promise<string> {
+    const prompt = input.trim();
+    if (!prompt || prompt.length > this.env.maxPromptChars) throw new AppError('input');
+    const key = conversationKey(c);
+    if (this.active.has(key) || this.active.size >= this.env.maxConcurrentRequests) throw new AppError('busy');
+    this.active.add(key);
+    try {
+      const settings = await this.settings(c.guildId);
+      if (!settings.enabled) throw new AppError('disabled');
+      assertAIChannel(settings, c.channelId, c.threadParentId);
+      const { provider, config, grounder } = this.resolveAI(settings, c.guildId);
+      if (!config.apiKey || !config.model) throw new AppError('config');
+      try {
+        this.limiter.consume([{ key: `user:${c.userId}`, limit: settings.userRateLimit }, { key: 'global', limit: this.env.globalRateLimit }]);
+      } catch (error) {
+        this.recordUsage(c.guildId, error instanceof AppError ? error.code : 'limited');
+        throw error;
+      }
+      const limit = Math.floor(settings.contextMessageLimit / 2) * 2;
+      const history = limit ? (await this.repository.getMessages(c, Date.now() - this.env.memoryTtlHours * 3600000)).slice(-limit) : [];
+      let baseHistory: Message[] = [];
+      if (history.length) {
+        let lastUserIdx = -1;
+        for (let i = history.length - 1; i >= 0; i--) {
+          if (history[i]?.role === 'user') { lastUserIdx = i; break; }
+        }
+        baseHistory = lastUserIdx >= 0 ? history.slice(0, lastUserIdx) : [];
+      }
+      const joke = images.length ? null : friendReply(prompt);
+      const grounding = !joke && grounder && (this.env.search.mode === 'always' || grounder.shouldSearch(prompt)) ? await grounder.search(prompt) : null;
+      const groundedPrompt = grounding ? `${prompt}\n\n${grounding.context}` : prompt;
+      let response: string;
+      try {
+        const generated = joke ?? await provider.generate([...baseHistory, { role: 'user', content: groundedPrompt, ...(images.length ? { images } : {}) }], config, this.env);
+        const sourceList = grounding?.sources.length && wantsSources(prompt) ? `\n\nแหล่งข้อมูลจากการค้นเว็บ:\n${grounding.sources.map(source => `- [${source.index}] <${source.url}>${source.title ? ` — ${source.title}` : ''}`).join('\n')}` : '';
+        response = generated + sourceList;
+      } catch (error) {
+        this.recordUsage(c.guildId, error instanceof AppError ? error.code : 'unavailable');
+        throw error;
+      }
+      if ((await this.settings(c.guildId)).revision !== settings.revision) throw new AppError('busy');
+      const updated: Message[] = [...baseHistory, { role: 'user', content: prompt }, { role: 'assistant', content: response }];
+      if (limit) await this.repository.saveMessages(c, updated.slice(-limit), Date.now());
+      this.recordUsage(c.guildId, null);
+      return response;
+    } finally { this.active.delete(key); }
+  }
   async summarize(c: Conversation): Promise<string> {
     const key = conversationKey(c);
     if (this.active.has(key) || this.active.size >= this.env.maxConcurrentRequests) throw new AppError('busy');
@@ -127,7 +177,7 @@ export class Conversations {
     try {
       const settings = await this.settings(c.guildId);
       if (!settings.enabled) throw new AppError('disabled');
-      assertAIChannel(settings, c.channelId);
+      assertAIChannel(settings, c.channelId, c.threadParentId);
       const { provider, config } = this.resolveAI(settings, c.guildId);
       if (!config.apiKey || !config.model) throw new AppError('config');
       try {
@@ -161,7 +211,7 @@ export class Conversations {
     try {
       const settings = await this.settings(c.guildId);
       if (!settings.enabled) throw new AppError('disabled');
-      assertAIChannel(settings, c.channelId);
+      assertAIChannel(settings, c.channelId, c.threadParentId);
       if (!this.resolveImage) throw new AppError('config');
       let image: ImageConfig;
       try { image = this.resolveImage(settings, c.guildId); } catch { throw new AppError('config'); }
