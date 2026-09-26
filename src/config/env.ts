@@ -1,5 +1,6 @@
 import { AppError } from '../utils/errors.js';
 import type { ProviderName } from '../ai/types.js';
+import { normalizeEffort } from '../ai/effort.js';
 export const providerNames: ProviderName[] = ['gemini', 'groq', 'openrouter', 'custom'];
 function integer(env: NodeJS.ProcessEnv, key: string, fallback: number, min: number, max: number): number {
   const raw = env[key];
@@ -39,7 +40,8 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env) {
     maxPromptChars, maxOutputTokens: integer(env, 'MAX_OUTPUT_TOKENS', 1024, 1, 8192),
     maxAttachmentBytes, maxAttachments: integer(env, 'MAX_ATTACHMENTS', 3, 1, 10),
     maxImageBytes: integer(env, 'MAX_IMAGE_BYTES', 2097152, 1024, 8388608),
-    maxResponseChars: integer(env, 'MAX_RESPONSE_CHARS', 12000, 100, 20000), timeoutMs: integer(env, 'AI_TIMEOUT_MS', 45000, 100, 120000),
+    maxResponseChars: integer(env, 'MAX_RESPONSE_CHARS', 12000, 100, 20000), timeoutMs: integer(env, 'AI_TIMEOUT_MS', 45000, 100, 600000),
+    defaultEffort: normalizeEffort(env.DEFAULT_EFFORT, 'medium'),
     maxConcurrentRequests: integer(env, 'MAX_CONCURRENT_REQUESTS', 2, 1, 100), memoryTtlHours: integer(env, 'MEMORY_TTL_HOURS', 168, 1, 8760),
     messageContentEnabled: env.MESSAGE_CONTENT_ENABLED !== 'false',
     customAllowedBaseUrls: (env.CUSTOM_AI_ALLOWED_BASE_URLS || '').split(',').map(s => s.trim()).filter(Boolean),

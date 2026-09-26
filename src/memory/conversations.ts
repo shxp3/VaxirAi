@@ -1,5 +1,6 @@
 import type { Env } from '../config/env.js';
-import type { AIProvider, ProviderConfig, Message, ImageContent } from '../ai/types.js';
+import type { AIProvider, ProviderConfig, Message, ImageContent, GenerationSettings } from '../ai/types.js';
+import { isEffortLevel, settingsForEffort } from '../ai/effort.js';
 import { conversationKey, type Conversation, type Repository, type GuildSettings } from '../database/repository.js';
 import { AppError } from '../utils/errors.js';
 import { RateLimiter } from '../rate-limit/limiter.js';
@@ -10,7 +11,13 @@ import { OpenRouterImageProvider, PollinationsImageProvider, cleanAspectRatio, c
 import { ProviderRequestQueue, providerQueueKey } from '../ai/request-queue.js';
 import type { ImageConfig } from '../config/resolve-image.js';
 export function defaultSettings(env: Env): GuildSettings {
-  return { enabled: true, aiChannelId: null, userRateLimit: env.userRateLimit, contextMessageLimit: env.contextMessageLimit, instructions: '', ai: null, image: null, revision: 0 };
+  return { enabled: true, aiChannelId: null, userRateLimit: env.userRateLimit, contextMessageLimit: env.contextMessageLimit, instructions: '', ai: null, image: null, effort: env.defaultEffort ?? 'medium', revision: 0 };
+}
+// Stored rows predate effort/timeout fields; normalize instead of failing.
+export function normalizeSettings(env: Env, settings: GuildSettings): GuildSettings {
+  if (!isEffortLevel(settings.effort)) settings.effort = env.defaultEffort ?? 'medium';
+  if (settings.timeoutMs !== undefined && !(Number.isInteger(settings.timeoutMs) && settings.timeoutMs >= 15000 && settings.timeoutMs <= 600000)) delete settings.timeoutMs;
+  return settings;
 }
 export type ResolveAI = (settings: GuildSettings, guildId: string) => { provider: AIProvider; config: ProviderConfig; grounder?: WebGrounder };
 export type ResolveImage = (settings: GuildSettings, guildId: string) => ImageConfig;
@@ -28,7 +35,8 @@ export class Conversations {
   private usageByCode = new Map<string, number>();
   private usageByGuild = new Map<string, { requests: number; quota: number }>();
   constructor(readonly repository: Repository, readonly env: Env, private resolveAI: ResolveAI, private resolveImage?: ResolveImage, private imageQueue?: ProviderRequestQueue, private imageProvider?: OpenRouterImageProvider) { this.limiter = new RateLimiter(env.rateWindowSeconds * 1000); }
-  async settings(guildId: string) { return await this.repository.getSettings(guildId) ?? defaultSettings(this.env); }
+  async settings(guildId: string) { return normalizeSettings(this.env, await this.repository.getSettings(guildId) ?? defaultSettings(this.env)); }
+  effortSettings(settings: GuildSettings): GenerationSettings { return settingsForEffort(this.env, settings.effort, settings.timeoutMs); }
   async assertChannel(guildId: string, channelId: string, threadParentId?: string | null): Promise<void> { assertAIChannel(await this.settings(guildId), channelId, threadParentId); }
   get activeCount() { return this.active.size; }
   usageSnapshot(): { requests: number; successes: number; byCode: Record<string, number>; byGuild: Record<string, { requests: number; quota: number }> } {
@@ -73,7 +81,7 @@ export class Conversations {
       const groundedPrompt = grounding ? `${prompt}\n\n${grounding.context}` : prompt;
       let response: string;
       try {
-        const generated = joke ?? await provider.generate([...history, { role: 'user', content: groundedPrompt, ...(images.length ? { images } : {}) }], config, this.env);
+        const generated = joke ?? await provider.generate([...history, { role: 'user', content: groundedPrompt, ...(images.length ? { images } : {}) }], config, this.effortSettings(settings));
         const sourceList = grounding?.sources.length && wantsSources(prompt) ? `\n\nแหล่งข้อมูลจากการค้นเว็บ:\n${grounding.sources.map(source => `- [${source.index}] <${source.url}>${source.title ? ` — ${source.title}` : ''}`).join('\n')}` : '';
         response = generated + sourceList;
       } catch (error) {
@@ -111,7 +119,7 @@ export class Conversations {
       const base = history[history.length - 1]?.role === 'assistant' ? history.slice(0, -1) : history;
       let response: string;
       try {
-        response = await provider.generate(base, config, this.env);
+        response = await provider.generate(base, config, this.effortSettings(settings));
       } catch (error) {
         this.recordUsage(c.guildId, error instanceof AppError ? error.code : 'unavailable');
         throw error;
@@ -156,7 +164,7 @@ export class Conversations {
       const groundedPrompt = grounding ? `${prompt}\n\n${grounding.context}` : prompt;
       let response: string;
       try {
-        const generated = joke ?? await provider.generate([...baseHistory, { role: 'user', content: groundedPrompt, ...(images.length ? { images } : {}) }], config, this.env);
+        const generated = joke ?? await provider.generate([...baseHistory, { role: 'user', content: groundedPrompt, ...(images.length ? { images } : {}) }], config, this.effortSettings(settings));
         const sourceList = grounding?.sources.length && wantsSources(prompt) ? `\n\nแหล่งข้อมูลจากการค้นเว็บ:\n${grounding.sources.map(source => `- [${source.index}] <${source.url}>${source.title ? ` — ${source.title}` : ''}`).join('\n')}` : '';
         response = generated + sourceList;
       } catch (error) {
@@ -191,7 +199,7 @@ export class Conversations {
       if (!history.length) throw new AppError('input');
       let response: string;
       try {
-        response = await provider.generate([...history, { role: 'user', content: 'Summarize this conversation concisely in the user language. Keep code identifiers intact.' }], config, this.env);
+        response = await provider.generate([...history, { role: 'user', content: 'Summarize this conversation concisely in the user language. Keep code identifiers intact.' }], config, this.effortSettings(settings));
       } catch (error) {
         this.recordUsage(c.guildId, error instanceof AppError ? error.code : 'unavailable');
         throw error;

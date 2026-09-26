@@ -290,7 +290,8 @@ export function createBot(env: Env, conversations: Conversations, admin: AdminCo
       const guildId = newMessage.guildId;
       const channelId = newMessage.channelId;
       const userId = newMessage.author.id;
-      const c = { guildId, channelId, userId };
+      const threadParentId = getThreadParentId(newMessage.channel);
+      const c = { guildId, channelId, userId, threadParentId };
       const key = conversationKey(c);
       const tracked = lastTurns.get(key);
       if (!tracked || tracked.userMessageId !== newMessage.id) return;
@@ -298,18 +299,26 @@ export function createBot(env: Env, conversations: Conversations, admin: AdminCo
       if (oldContent !== undefined && oldContent === newMessage.content && (oldMessage as { attachments?: { size: number } })?.attachments?.size === newMessage.attachments.size) return;
       const settings = await conversations.settings(guildId);
       const mentioned = newMessage.mentions.users.has(client.user.id);
-      if (!shouldRespond({ guildId, authorIsBot: false, webhookId: null, mentioned, channelId, aiChannelId: settings.aiChannelId })) return;
+      if (!shouldRespond({ guildId, authorIsBot: false, webhookId: null, mentioned, channelId, aiChannelId: settings.aiChannelId, threadParentId })) return;
       if (!settings.enabled) return;
-      try { await conversations.assertChannel(guildId, channelId); } catch { return; }
+      try { await conversations.assertChannel(guildId, channelId, threadParentId); } catch { return; }
       const raw = removeBotMention(newMessage.content ?? '', client.user.id);
       if (!raw.trim() && newMessage.attachments.size === 0) return;
       if (!('messages' in newMessage.channel)) return;
       const stopTyping = startTypingLoop(newMessage.channel as { sendTyping(): Promise<unknown> });
       try {
         const request = await buildRequestWithAttachments(raw, newMessage.attachments.values() as Iterable<TextAttachment>, env);
+        let editPrompt = request.prompt;
+        try {
+          const replyCtx = await fetchReplyContext(newMessage);
+          if (replyCtx) {
+            const combined = combinePromptWithContext(editPrompt, [replyCtx], env.maxPromptChars);
+            if (combined.length <= env.maxPromptChars) editPrompt = combined;
+          }
+        } catch { /* reply context is best-effort */ }
         let response: string;
         try {
-          response = await conversations.editLast(c, request.prompt, request.images);
+          response = await conversations.editLast(c, editPrompt, request.images);
         } catch (error) {
           if (error instanceof AppError && error.code === 'busy') return;
           throw error;

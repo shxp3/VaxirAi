@@ -29,5 +29,11 @@ export const commands = [
     .addSubcommand(s => s.setName('reset-instructions').setDescription('ล้างบุคลิก AI และกลับไปใช้ค่าเริ่มต้น'))
     .addSubcommand(s => s.setName('ai-channel').setDescription('ตั้งห้อง AI หรือเว้นว่างเพื่อลบห้อง AI').addChannelOption(o => o.setName('channel').setDescription('ห้อง AI').addChannelTypes(ChannelType.GuildText)))
     .addSubcommand(s => s.setName('limits').setDescription('ตั้งค่าขีดจำกัด').addIntegerOption(o => o.setName('requests').setDescription('คำขอต่อผู้ใช้ต่อช่วงเวลา').setMinValue(1).setMaxValue(100)).addIntegerOption(o => o.setName('context').setDescription('จำนวนข้อความความจำ 0 = ปิด').setMinValue(0).setMaxValue(40)))
+    .addSubcommand(s => s.setName('effort').setDescription('ตั้งระดับ reasoning effort ของเซิร์ฟเวอร์').addStringOption(o => o.setName('value').setDescription('light/low/medium/high/max').setRequired(true).addChoices(
+      { name: 'light — เร็วสุด', value: 'light' }, { name: 'low — เร็ว', value: 'low' }, { name: 'medium — สมดุล', value: 'medium' },
+      { name: 'high — ลึก', value: 'high' }, { name: 'max — ลึกสุด', value: 'max' },
+    )))
+    .addSubcommand(s => s.setName('timeout').setDescription('ตั้งเวลารอ AI สูงสุดของเซิร์ฟเวอร์').addIntegerOption(o => o.setName('seconds').setDescription('15-600 วินาที').setRequired(true).setMinValue(15).setMaxValue(600)))
+    .addSubcommand(s => s.setName('reset-timeout').setDescription('กลับไปใช้ timeout กลางของบอต'))
     .addSubcommand(s => s.setName('enabled').setDescription('เปิดหรือปิด AI').addBooleanOption(o => o.setName('value').setDescription('เปิดใช้งาน').setRequired(true))),
 ];

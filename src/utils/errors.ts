@@ -19,7 +19,7 @@ export function userError(error: unknown): string {
     intent: 'ยังใช้ห้อง AI อัตโนมัติไม่ได้ เจ้าของบอตต้องเปิด Message Content Intent ใน Discord Developer Portal → Bot → Privileged Gateway Intents แล้วตั้ง MESSAGE_CONTENT_ENABLED=true และรีสตาร์ตบอต ระหว่างนี้ใช้ /ask หรือ @mention ได้',
     channel_permissions: 'บอตเข้าถึงห้องนี้ไม่ได้ กรุณาให้สิทธิ์ View Channel, Send Messages และ Read Message History ในห้องที่เลือก',
     quota: '⚠️ Vaxir AI ใช้งานไม่ได้ชั่วคราว ผู้ให้บริการ AI ใช้งานครบโควตาแล้ว กรุณาลองใหม่ภายหลัง',
-    timeout: 'ผู้ให้บริการ AI ตอบกลับช้าเกินไป กรุณาลองใหม่ภายหลัง',
+    timeout: 'ผู้ให้บริการ AI ตอบกลับช้าเกินไป กรุณาลองใหม่ภายหลัง (แอดมินเพิ่มเวลารอได้ด้วย /setup timeout หรือลด effort ด้วย /setup effort)',
     auth: 'ผู้ให้บริการ AI ปฏิเสธ API Key กรุณาแจ้งผู้ดูแลให้ตรวจสอบการตั้งค่า',
     model: 'โมเดลหรือคำขอไม่รองรับ กรุณาแจ้งผู้ดูแลให้ตรวจสอบการตั้งค่าโมเดล',
     unavailable: 'Vaxir AI ไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่ภายหลัง',

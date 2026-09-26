@@ -3,6 +3,7 @@ import { requestJson, answerText } from './http.js';
 import { AppError } from '../utils/errors.js';
 import { publicGatewayFetch } from './public-gateway.js';
 import { identityInstruction } from './identity.js';
+import { chatReasoningEffort } from './effort.js';
 export class OpenAICompatibleProvider implements AIProvider {
   constructor(private readonly baseUrl: string, private readonly publicGateway = false) {}
   async generate(messages: Message[], config: ProviderConfig, settings: GenerationSettings): Promise<string> {
@@ -17,6 +18,7 @@ export class OpenAICompatibleProvider implements AIProvider {
         ...message.images.map(image => ({ type: 'image_url', image_url: { url: `data:${image.mediaType};base64,${image.data}` } })),
       ] : message.content }))],
       ...(webEnabled ? { compound_custom: { tools: { enabled_tools: ['web_search', 'visit_website'] } } } : {}),
+      ...(chatReasoningEffort(settings.effort) ? { reasoning_effort: chatReasoningEffort(settings.effort) } : {}),
       max_tokens: settings.maxOutputTokens, stream: false,
     }, settings.timeoutMs, this.publicGateway ? publicGatewayFetch : undefined);
     // OpenRouter can report a provider error inside an HTTP 200 response.

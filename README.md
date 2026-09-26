@@ -4,14 +4,15 @@
 
 ## ความสามารถ
 
-- `/ask message` ถาม AI, `/clear` ล้างความจำของคุณในห้องปัจจุบัน, `/regenerate` ตอบใหม่, `/summarize` สรุปบทสนทนา
+- `/ask message file:` ถาม AI, `/imagine prompt: image: aspect:` สร้างหรือแต่งรูปภาพ, `/clear` ล้างความจำของคุณในห้องปัจจุบัน, `/regenerate` ตอบคำถามล่าสุดใหม่อีกครั้ง (มีปุ่ม `Regenerate` ใต้คำตอบด้วย), `/summarize` สรุปบทสนทนาของคุณในห้องนี้, `/help` วิธีใช้และรายชื่อคำสั่ง, `/status` ดูสถานะและการตั้งค่า (ทุกคนใช้ได้)
+- `/usage` ดูสถิติการใช้งาน และ `/server-plan instruction:` วางแผนช่อง/Role/สมาชิกก่อนกด Accept สำหรับผู้มีสิทธิ์ Administrator เท่านั้น
 - ทุกคำตอบของ AI มีปุ่ม `Regenerate` กดเพื่อตอบใหม่แล้วลบคำตอบเก่า ปุ่มผูกกับคนถามเท่านั้น คนอื่นกดไม่ได้
 - แก้ไขข้อความล่าสุดของคุณในห้อง AI/mention แล้วบอตจะตอบใหม่แทนที่คำตอบเดิม โดยแทนที่เทิร์นล่าสุดในความจำ ไม่ใช่ต่อท้าย
 - เมื่อ AI เขียนโค้ด บอตจะแยก fenced code block เป็นไฟล์แนบตามภาษา เช่น `code-1.java` หรือ `code-1.py` และแสดงเฉพาะคำอธิบายในข้อความ
 - เมื่อถามตัวตน บอตตอบว่า Vaxir AI สร้างโดย `shxp3` และรายงาน provider/model จากค่าที่กำลังใช้งานจริง โดยไม่เปิดเผย Key หรือ Gateway URL
 - `/ask file` อ่านรูป JPG/PNG/GIF/WebP และไฟล์ข้อความหรือโค้ด UTF-8 หรือแนบหลายไฟล์ผ่านข้อความในห้อง AI/mention ได้สูงสุดตามค่าที่กำหนด รูปถูกส่งให้โมเดลเฉพาะคำขอปัจจุบันและไม่บันทึก Base64 ลง memory
-- เรียกด้วย `@Vaxir AI` หรือคุยในห้อง AI ที่แอดมินกำหนด เมื่อกำหนดห้องแล้ว `/ask` และ mention จากห้องอื่นจะถูกปฏิเสธพร้อมลิงก์ไปยังห้อง AI ไม่อ่านข้อความย้อนหลังทั้งเซิร์ฟเวอร์มาเป็นบริบท
-- `/setup` และ `/status` สำหรับผู้มีสิทธิ์ Administrator เท่านั้น ตรวจสิทธิ์ซ้ำเมื่อส่งแบบฟอร์ม
+- เรียกด้วย `@Vaxir AI` หรือคุยในห้อง AI ที่แอดมินกำหนด (รวมเธรดใต้ห้อง AI) เมื่อกำหนดห้องแล้ว `/ask` และ mention จากห้องอื่นจะถูกปฏิเสธพร้อมลิงก์ไปยังห้อง AI บอตอ่านเฉพาะข้อความที่คุณ reply อ้างถึงและบริบทเธรดปัจจุบัน (เมื่อความจำว่าง) ประกอบคำถาม ไม่กวาดข้อความย้อนหลังทั้งเซิร์ฟเวอร์มาเป็นบริบท
+- `/setup`, `/usage` และ `/server-plan` สำหรับผู้มีสิทธิ์ Administrator เท่านั้น ตรวจสิทธิ์ซ้ำเมื่อส่งแบบฟอร์ม ส่วน `/status` และ `/help` ทุกคนใช้ได้
 - API Key ของเซิร์ฟเวอร์เข้ารหัส AES-256-GCM โดยใช้กุญแจจาก environment และผูก ciphertext กับ server ID
 - ใช้ provider เริ่มต้นของเจ้าของบอตเมื่อเซิร์ฟเวอร์ไม่ได้ตั้ง provider ของตนเอง ไม่มี automatic fallback เมื่อ provider ล้มเหลว
 - จำกัดคำขอต่อผู้ใช้ข้ามห้อง/เซิร์ฟเวอร์ พร้อมขีดจำกัดรวมของบอต ป้องกันคำขอซ้อนในบทสนทนาเดียว
@@ -67,7 +68,7 @@ npm.cmd start
 
 หากไม่ใช้ห้อง AI ตั้ง `MESSAGE_CONTENT_ENABLED=false` ได้ ยังใช้ slash commands และ direct mention ได้ การอ่านห้องอัตโนมัติต้องเปิด intent ทั้งใน Portal และ configuration แอปที่มีขนาดถึงเกณฑ์ Discord อาจต้องได้รับอนุมัติ privileged intent ตาม [Gateway documentation](https://docs.discord.com/developers/events/gateway)
 
-คำสั่งถาม AI จะ defer ก่อนเรียก provider เพื่อให้ทันเวลารับ interaction ตาม [Discord interactions](https://docs.discord.com/developers/interactions/receiving-and-responding)
+คำสั่งถาม AI จะ defer ก่อนเรียก provider เพื่อให้ทันเวลารับ interaction ตาม [Discord interactions](https://docs.discord.com/developers/interactions/receiving-and-responding) และแสดง typing indicator ในห้องระหว่างรอผลลัพธ์
 
 ## ตั้งค่า AI
 
@@ -109,12 +110,20 @@ Custom เลือก API ใน `/setup provider` ได้สามแบบ:
 | `/setup reset-instructions` | ล้างบุคลิกที่กำหนดและกลับไปใช้ค่าเริ่มต้น |
 | `/setup ai-channel channel:#ai-chat` | ตั้งห้อง AI; เว้น channel เพื่อลบการตั้งห้อง |
 | `/setup limits requests:5 context:20` | จำกัด requests ต่อช่วงเวลาที่เจ้าของบอตตั้ง และจำนวนข้อความความจำ |
+| `/setup effort value:high` | ตั้ง reasoning effort ของเซิร์ฟเวอร์ `light`/`low`/`medium`/`high`/`max` (default `medium`) |
+| `/setup timeout seconds:120` | ตั้งเวลารอ AI สูงสุดของเซิร์ฟเวอร์ 15–600 วินาที |
+| `/setup reset-timeout` | กลับไปใช้ timeout กลางของบอต |
 | `/setup enabled value:false` | ปิด AI ของเซิร์ฟเวอร์ |
-| `/status` | แสดง provider/model/สถานะ search กลาง/ห้อง/limits โดยไม่ตรวจการเชื่อมต่อและไม่แสดง key |
+| `/status` | แสดง provider/model/effort/timeout/สถานะ search กลาง/ห้อง/limits โดยไม่ตรวจการเชื่อมต่อและไม่แสดง key (ทุกคนใช้ได้) |
+| `/help` | แสดงวิธีใช้และรายชื่อคำสั่งทั้งหมด (ทุกคนใช้ได้) |
+| `/usage` | สถิติการใช้งาน AI ตั้งแต่รีสตาร์ต (แอดมิน) |
+| `/server-plan instruction:...` | วางแผนจัดการช่อง/Role/สมาชิก แสดงตัวอย่างก่อนกด Accept/Deny (แอดมิน) |
 
 แบบฟอร์ม API Key เป็น private interaction แต่ช่องกรอกของ Discord ไม่ใช่ password field แบบปิดบังตัวอักษร และข้อมูลส่งผ่าน Discord ไปยังบอต อย่าแชร์หน้าจอระหว่างกรอก หากไม่ต้องการส่ง key ผ่าน Discord ให้ใช้ default key จาก environment แทน
 
-ทุกครั้งที่เปลี่ยนการตั้งค่าจะล้างความจำเดิมของเซิร์ฟเวอร์ คำตอบที่กำลังประมวลผลด้วย revision เก่าจะถูกทิ้ง ค่า context คี่จะปัดลงเป็นเลขคู่เพื่อเก็บคู่ user/assistant ตั้ง 0 เพื่อปิดความจำ ค่าบทสนทนายังคงอยู่หลัง restart แต่ rate-limit counters เริ่มใหม่
+Effort `light`/`low` ตอบเร็วใช้โควตาน้อย `medium` สมดุล (ค่าเดิม ไม่ส่ง reasoning param เพิ่ม) `high`/`max` ส่ง `thinkingLevel`/`reasoning_effort`/`thinking budget` ให้โมเดลคิดลึกขึ้น พร้อมเพิ่ม `maxOutputTokens` และเวลารอ โมเดลเก่าบางรุ่นไม่รองรับ `minimal` (เช่น Gemini Pro รองรับแค่ low/high) ถ้าได้ error `model` ให้ถอยมา `low` หรือ `medium`
+
+ทุกครั้งที่เปลี่ยนการตั้งค่าหลัก (provider/instructions/ห้อง/limits) จะล้างความจำเดิมของเซิร์ฟเวอร์ ส่วน `/setup effort`, `/setup timeout` และ `/setup reset-timeout` ไม่ล้างความจำ คำตอบที่กำลังประมวลผลด้วย revision เก่าจะถูกทิ้ง ค่า context คี่จะปัดลงเป็นเลขคู่เพื่อเก็บคู่ user/assistant ตั้ง 0 เพื่อปิดความจำ ค่าบทสนทนายังคงอยู่หลัง restart แต่ rate-limit counters เริ่มใหม่
 
 ## Environment variables
 
@@ -139,7 +148,8 @@ Custom เลือก API ใน `/setup provider` ได้สามแบบ:
 | `MAX_ATTACHMENTS` | 3 ไฟล์ต่อข้อความ; `/ask` รองรับช่องแนบหนึ่งไฟล์ ส่วนข้อความปกติรองรับตามค่านี้ |
 | `MAX_OUTPUT_TOKENS` | 1024 |
 | `MAX_RESPONSE_CHARS` | 12000; ตัดข้อความส่วนเกินและแบ่งส่งให้พอดี Discord |
-| `AI_TIMEOUT_MS` | 45000; สูงสุด 120000 |
+| `AI_TIMEOUT_MS` | 45000; สูงสุด 600000 (10 นาที) เป็นฐานของ `medium` ส่วน `high` รอสูงสุด 2 เท่า (ไม่เกิน 5 นาที) และ `max` รอสูงสุด 3 เท่า (ไม่ต่ำกว่า 3 นาที ไม่เกิน 10 นาที) แอดมินตั้งรายเซิร์ฟเวอร์ได้ด้วย `/setup timeout` |
+| `DEFAULT_EFFORT` | `medium`; effort เริ่มต้นของเซิร์ฟเวอร์ใหม่ `light`/`low`/`medium`/`high`/`max` |
 | `MAX_CONCURRENT_REQUESTS` | 2 รวมคำขอที่กำลังรอคิว AI |
 | `MEMORY_TTL_HOURS` | 168; ไม่โหลดบริบทที่หมดอายุ และเก็บกวาดเมื่อ start/ทุกชั่วโมง |
 | `MESSAGE_CONTENT_ENABLED` | `true` |
@@ -193,7 +203,8 @@ Dockerfile/Compose เตรียมไว้ แต่ยังไม่ได
 - Gateway ปิดด้วย privileged-intent error: ตรวจ Message Content Intent ใน Developer Portal หรือปิดฟีเจอร์ด้วย environment
 - mention ใช้ได้แต่ห้อง AI ไม่ตอบ: ตรวจ `/setup ai-channel`, enabled, Message Content Intent และสิทธิ์บอตในห้อง
 - key ใช้ไม่ได้: ตรวจ provider, key, สิทธิ์บัญชี และ model; การบันทึก setup ไม่ได้ตรวจ key จริงล่วงหน้า
-- คำขอ AI ใช้คิวร่วมตาม origin ของ API และ key ข้ามเซิร์ฟเวอร์/โมเดลใน process เดียว ส่งทีละคำขอและเว้นระยะตาม `AI_REQUEST_INTERVAL_MS` คิวรับได้สูงสุด 8 คำขอรวมที่กำลังทำงาน เวลาเข้าคิวรวมอยู่ใน `AI_TIMEOUT_MS` และคำขอที่หมดเวลาก่อนส่งจะไม่เรียก API
+- คำขอ AI ใช้คิวร่วมตาม origin ของ API และ key ข้ามเซิร์ฟเวอร์/โมเดลใน process เดียว ส่งทีละคำขอและเว้นระยะตาม `AI_REQUEST_INTERVAL_MS` คิวรับได้สูงสุด 8 คำขอรวมที่กำลังทำงาน เวลาเข้าคิวรวมอยู่ใน timeout ของ effort นั้น และคำขอที่หมดเวลาก่อนส่งจะไม่เรียก API
+- `timeout` (ผู้ให้บริการ AI ตอบกลับช้าเกินไป): เพิ่มเวลารอด้วย `/setup timeout seconds:120` หรือลด effort ด้วย `/setup effort value:medium` ถ้าใช้ `high`/`max` แล้วยัง timeout อาจเป็นโมเดลที่คิดนานเกิน 10 นาทีหรือคิวติด `busy` จากคำขออื่น
 - quota/429: พักคิวที่ใช้ปลายทางและ key เดียวกันตาม Retry-After (สูงสุด 24 ชั่วโมง) หรือ 60 วินาทีถ้าไม่มี รวมถึง quota error ใน HTTP 200 คำขอที่รอคิวจะได้รับแจ้งเวลาพัก ไม่มีการ retry อัตโนมัติหรือสลับ key/provider เพื่อเลี่ยงโควตา
 - gateway_blocked: หมายถึง HTTP 403 ที่ไม่ใช่ JSON จากปลายทาง API ของ AI ไม่ใช่หลักฐานว่า Discord Gateway บล็อก พักคิว 5 นาทีหรือตาม Retry-After หากเกิดซ้ำให้ผู้ให้บริการตรวจสิทธิ์และ firewall
 - log `upstream_http_failed` เก็บเวลา, HTTP status, ประเภท JSON/non-JSON และ CF-Ray/UUID request ID ที่ผ่านการตรวจรูปแบบ ไม่เก็บ key, URL, prompt หรือ response body การลดความถี่ไม่รับประกันว่าจะผ่านกฎ firewall

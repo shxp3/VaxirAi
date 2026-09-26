@@ -3,11 +3,15 @@ import { requestJson, answerText } from './http.js';
 import { publicGatewayFetch } from './public-gateway.js';
 import { AppError } from '../utils/errors.js';
 import { identityInstruction } from './identity.js';
+import { messagesThinkingBudget } from './effort.js';
 
 // Anthropic-compatible wire format; model IDs are provided by the gateway.
 export class MessagesProvider implements AIProvider {
   constructor(private readonly baseUrl: string, private readonly transport = publicGatewayFetch) {}
   async generate(messages: Message[], config: ProviderConfig, settings: GenerationSettings): Promise<string> {
+    const thinkingBudget = messagesThinkingBudget(settings.effort);
+    // Extended thinking requires max_tokens above the thinking budget.
+    const maxTokens = thinkingBudget ? Math.max(settings.maxOutputTokens, thinkingBudget + 1024) : settings.maxOutputTokens;
     const data = await requestJson(`${this.baseUrl}/messages`, {
       'x-api-key': config.apiKey,
       'anthropic-version': '2023-06-01',
@@ -18,7 +22,8 @@ export class MessagesProvider implements AIProvider {
         { type: 'text', text: message.content },
         ...message.images.map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } })),
       ] : message.content })),
-      max_tokens: settings.maxOutputTokens,
+      max_tokens: maxTokens,
+      ...(thinkingBudget ? { thinking: { type: 'enabled', budget_tokens: thinkingBudget } } : {}),
       stream: false,
     }, settings.timeoutMs, this.transport);
     if (data?.type === 'error' || data?.error) {

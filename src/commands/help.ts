@@ -9,7 +9,7 @@ export const HELP_TEXT = [
   '/status — ดู provider/model/ห้อง AI/limits (ทุกคนใช้ได้)',
   '/help — แสดงข้อความนี้',
   '/usage — สถิติการใช้งาน (แอดมิน)',
-  '/setup provider|image|instructions|ai-channel|limits|enabled|reset-* — ตั้งค่าบอต (แอดมิน)',
+  '/setup provider|image|instructions|ai-channel|limits|effort|timeout|enabled|reset-* — ตั้งค่าบอต (แอดมิน)',
   '/server-plan instruction:คำสั่ง — วางแผนช่อง/Role/สมาชิกก่อนกด Accept (แอดมิน)',
   '',
   'คุยโดยไม่ใช้คำสั่ง: พิมพ์ในห้อง AI ที่แอดมินตั้ง หรือ @ถึงบอตในห้องอื่น (ถ้าเซิร์ฟเวอร์ไม่ได้ล็อกห้อง) รองรับเธรดใต้ห้อง AI, ตอบกลับ (reply) ข้อความเพื่ออ้างอิง, แนบรูป JPG/PNG/GIF/WebP และไฟล์ข้อความ/โค้ด',

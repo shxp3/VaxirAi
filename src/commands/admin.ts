@@ -2,6 +2,7 @@ import { ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, Messa
 import type { Env } from '../config/env.js';
 import { providerNames } from '../config/env.js';
 import type { ProviderName, ApiFormat, ProviderConfig } from '../ai/types.js';
+import { isEffortLevel } from '../ai/effort.js';
 import { createProvider, customApiFormat } from '../ai/factory.js';
 import { queueCooldownForConfig, sharedQueue, queuedProvider } from '../ai/request-queue.js';
 import type { Secrets } from '../config/secrets.js';
@@ -66,7 +67,7 @@ export class AdminCommands {
         } catch { /* Never leak key errors in status; fall back to none. */ }
         const imageModel = settings.image?.model.replace(/[\r\n`<>@]/g, '').slice(0, 150) || this.env.defaultImage.model || (this.env.imageProvider === 'pollinations' ? 'flux' : '(ยังไม่ตั้งค่า)');
         const imageProvider = settings.image?.provider ?? this.env.imageProvider;
-        await i.editReply({ content: `Vaxir AI\nProvider: ${ai.provider}\nModel: ${model}${api}\nImage: ${imageProvider}/${imageModel}\nWeb Search: ${search}\nAI Channel: ${settings.aiChannelId ? `<#${settings.aiChannelId}>` : 'ไม่ได้ตั้งค่า'}\nStatus: ${settings.enabled ? 'Enabled' : 'Disabled'} (ยังไม่ได้ตรวจ provider)\n${cooldownText}\nRate Limit: ${settings.userRateLimit} / ${this.env.rateWindowSeconds} วินาที\nMemory: ${settings.contextMessageLimit} ข้อความ\nSource: ${settings.ai ? 'Server' : 'Default'}`, allowedMentions: { parse: [] } }); return;
+        await i.editReply({ content: `Vaxir AI\nProvider: ${ai.provider}\nModel: ${model}${api}\nEffort: ${settings.effort ?? 'medium'}\nTimeout: ${Math.round((settings.timeoutMs ?? this.env.timeoutMs) / 1000)}s${settings.timeoutMs ? ` (server, base ${Math.round(this.env.timeoutMs / 1000)}s)` : ''}\nImage: ${imageProvider}/${imageModel}\nWeb Search: ${search}\nAI Channel: ${settings.aiChannelId ? `<#${settings.aiChannelId}>` : 'ไม่ได้ตั้งค่า'}\nStatus: ${settings.enabled ? 'Enabled' : 'Disabled'} (ยังไม่ได้ตรวจ provider)\n${cooldownText}\nRate Limit: ${settings.userRateLimit} / ${this.env.rateWindowSeconds} วินาที\nMemory: ${settings.contextMessageLimit} ข้อความ\nSource: ${settings.ai ? 'Server' : 'Default'}`, allowedMentions: { parse: [] } }); return;
       }
       if (i.isChatInputCommand() && i.commandName === 'usage') {
         const snap = this.conversations.usageSnapshot();
@@ -144,6 +145,28 @@ export class AdminCommands {
             settings.userRateLimit = i.options.getInteger('requests') ?? settings.userRateLimit;
             settings.contextMessageLimit = i.options.getInteger('context') ?? settings.contextMessageLimit;
             break;
+          }
+          case 'effort': {
+            const value = (i.options.getString('value', true) ?? '').trim().toLowerCase();
+            if (!isEffortLevel(value)) throw new AppError('input');
+            settings.effort = value;
+            await this.conversations.repository.saveSettings(id, settings);
+            await i.editReply('บันทึก effort แล้ว (medium = สมดุล, high/max คิดลึกขึ้นแต่ช้าและใช้โควตามากขึ้น)');
+            return;
+          }
+          case 'timeout': {
+            const seconds = i.options.getInteger('seconds', true);
+            if (!Number.isInteger(seconds) || seconds < 15 || seconds > 600) throw new AppError('input');
+            settings.timeoutMs = seconds * 1000;
+            await this.conversations.repository.saveSettings(id, settings);
+            await i.editReply(`ตั้งเวลารอ AI สูงสุดของเซิร์ฟเวอร์เป็น ${seconds} วินาทีแล้ว (high ≈ ${Math.min(seconds * 2, 300)}s, max ≈ ${Math.min(Math.max(seconds * 3, 180), 600)}s)`);
+            return;
+          }
+          case 'reset-timeout': {
+            delete settings.timeoutMs;
+            await this.conversations.repository.saveSettings(id, settings);
+            await i.editReply(`กลับไปใช้ timeout กลางของบอต (${Math.round(this.env.timeoutMs / 1000)} วินาที) แล้ว`);
+            return;
           }
           default: throw new AppError('config');
         }

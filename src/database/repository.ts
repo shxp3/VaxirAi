@@ -1,7 +1,9 @@
 import type { Message, ProviderName, ApiFormat } from '../ai/types.js';
+import type { EffortLevel } from '../ai/effort.js';
 export interface GuildSettings {
   enabled: boolean; aiChannelId: string | null; userRateLimit: number; contextMessageLimit: number;
   instructions?: string;
+  effort: EffortLevel; timeoutMs?: number;
   ai: { provider: ProviderName; model: string; encryptedKey: string; baseUrl?: string; apiFormat?: ApiFormat } | null;
   image?: { provider: 'openrouter' | 'pollinations'; model: string; encryptedKey: string } | null;
   revision: number;
