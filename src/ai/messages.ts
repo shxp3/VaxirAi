@@ -1,5 +1,7 @@
-import type { AIProvider, Message, ProviderConfig, GenerationSettings } from './types.js';
-import { requestJson, answerText } from './http.js';
+import { requestGeneration } from './stream.js';
+import { shouldStream } from './lifecycle.js';
+import type { AIProvider, Message, ProviderConfig, GenerationSettings, GenerationOptions } from './types.js';
+import { completedText } from './http.js';
 import { publicGatewayFetch } from './public-gateway.js';
 import { AppError } from '../utils/errors.js';
 import { identityInstruction } from './identity.js';
@@ -8,11 +10,12 @@ import { messagesThinkingBudget } from './effort.js';
 // Anthropic-compatible wire format; model IDs are provided by the gateway.
 export class MessagesProvider implements AIProvider {
   constructor(private readonly baseUrl: string, private readonly transport = publicGatewayFetch) {}
-  async generate(messages: Message[], config: ProviderConfig, settings: GenerationSettings): Promise<string> {
+  async generate(messages: Message[], config: ProviderConfig, settings: GenerationSettings, options?: GenerationOptions): Promise<string> {
+    const streaming = shouldStream(config, options);
     const thinkingBudget = messagesThinkingBudget(settings.effort);
     // Extended thinking requires max_tokens above the thinking budget.
     const maxTokens = thinkingBudget ? Math.max(settings.maxOutputTokens, thinkingBudget + 1024) : settings.maxOutputTokens;
-    const data = await requestJson(`${this.baseUrl}/messages`, {
+    const data = await requestGeneration('messages', `${this.baseUrl}/messages`, {
       'x-api-key': config.apiKey,
       'anthropic-version': '2023-06-01',
     }, {
@@ -24,15 +27,17 @@ export class MessagesProvider implements AIProvider {
       ] : message.content })),
       max_tokens: maxTokens,
       ...(thinkingBudget ? { thinking: { type: 'enabled', budget_tokens: thinkingBudget } } : {}),
-      stream: false,
-    }, settings.timeoutMs, this.transport);
+      stream: streaming,
+    }, settings, options, streaming, this.transport);
+    if (typeof data === 'string') return data;
     if (data?.type === 'error' || data?.error) {
       const code = String(data?.error?.type ?? data?.error?.code ?? '');
       throw new AppError(['rate_limit_error', '429'].includes(code) ? 'quota' : ['authentication_error', 'permission_error', '401', '403'].includes(code) ? 'auth' : ['invalid_request_error', 'not_found_error', '400', '404'].includes(code) ? 'model' : 'unavailable');
     }
     if (data?.type !== 'message' || data?.role !== 'assistant' || !Array.isArray(data.content)) throw new AppError('malformed');
+    if (data.stop_reason === 'max_tokens') throw new AppError('incomplete');
     const text = data.content.filter((part: any) => part?.type === 'text' && typeof part.text === 'string')
       .map((part: any) => part.text).join('\n');
-    return answerText(text, settings.maxResponseChars);
+    return completedText(text, settings.maxResponseChars, options);
   }
 }

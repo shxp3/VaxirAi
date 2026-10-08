@@ -4,5 +4,5 @@ export interface GroundingResult {
 }
 export interface WebGrounder {
   shouldSearch(query: string): boolean;
-  search(query: string): Promise<GroundingResult | null>;
+  search(query: string, options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<GroundingResult | null>;
 }

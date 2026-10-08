@@ -60,7 +60,7 @@ test('provider errors produce a friendly deferred reply', async () => {
       commandName: 'ask', guildId: '1', channelId: '2', user: { id: '3' }, options: { getString: () => 'hi', getAttachment: () => null },
       deferReply: async () => {}, editReply: async (value: any) => { sent.push(value); },
     });
-    assert.equal(sent.length, 1); assert.ok(sent[0].includes('โควตา')); assert.ok(sent[0].includes('5'));
+    assert.equal(sent.length, 1); assert.ok(sent[0].content.includes('โควตา')); assert.ok(sent[0].content.includes('5'));
   } finally { client.destroy(); }
 });
 test('code answers are sent as files instead of inline code blocks', async () => {

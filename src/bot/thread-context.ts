@@ -50,7 +50,7 @@ export async function fetchReplyContext(messageLike: unknown, maxChars = 2000): 
 }
 
 /** Fetch starter + recent messages of a thread/forum post as seed context. Returns null outside threads or on failure. */
-export async function fetchThreadSeed(channelLike: unknown, maxChars = 3000): Promise<string | null> {
+export async function fetchThreadSeed(channelLike: unknown, maxChars = 3000, excludedMessageIds: string[] = []): Promise<string | null> {
   try {
     const ch = channelLike as {
       isThread?: () => boolean;
@@ -72,6 +72,7 @@ export async function fetchThreadSeed(channelLike: unknown, maxChars = 3000): Pr
       if (fetched && fetched.size) {
         const lines = [...fetched.values()]
           .reverse()
+          .filter(m => !excludedMessageIds.includes(String((m as { id?: unknown }).id ?? '')))
           .map((m) => {
             const msg = m as { content?: unknown; author?: { username?: unknown; bot?: unknown } };
             const text = cleanSnippet(String(msg?.content ?? ''), 600);

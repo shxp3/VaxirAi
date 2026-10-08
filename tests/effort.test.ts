@@ -137,7 +137,7 @@ test('ask uses effort-scaled generation settings', async () => {
   const c = { guildId: '1', channelId: '2', userId: '3' };
   await service.ask(c, 'hello');
   assert.equal(seen[0]?.effort, 'medium');
-  assert.equal(seen[0]?.timeoutMs, env.timeoutMs);
+  assert.ok(seen[0]!.timeoutMs > 0 && seen[0]!.timeoutMs <= env.timeoutMs);
   const settings = await repo.getSettings('1') ?? defaultSettings(env);
   settings.effort = 'max';
   settings.timeoutMs = 120000;

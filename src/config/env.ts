@@ -18,6 +18,7 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env) {
   const imageProvider = (env.IMAGE_PROVIDER || 'pollinations').trim().toLowerCase();
   if (!['openrouter', 'pollinations'].includes(imageProvider)) throw new AppError('config');
   if (!['auto', 'always'].includes(searchMode) || !(searchCountry === 'ALL' || /^[A-Z]{2}$/.test(searchCountry)) || !/^[a-z]{2,3}(?:-[a-z]{2})?$/.test(searchLanguage)) throw new AppError('config');
+  if (env.CUSTOM_AI_STREAMING && !['true', 'false'].includes(env.CUSTOM_AI_STREAMING)) throw new AppError('config');
   if (env.MESSAGE_CONTENT_ENABLED && !['true', 'false'].includes(env.MESSAGE_CONTENT_ENABLED)) throw new AppError('config');
   const maxAttachmentBytes = integer(env, 'MAX_ATTACHMENT_BYTES', 15728640, 1024, 33554432);
   const configuredMaxPromptChars = integer(env, 'MAX_PROMPT_CHARS', 16777216, 1, 67108864);
@@ -44,6 +45,8 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env) {
     defaultEffort: normalizeEffort(env.DEFAULT_EFFORT, 'medium'),
     maxConcurrentRequests: integer(env, 'MAX_CONCURRENT_REQUESTS', 2, 1, 100), memoryTtlHours: integer(env, 'MEMORY_TTL_HOURS', 168, 1, 8760),
     messageContentEnabled: env.MESSAGE_CONTENT_ENABLED !== 'false',
+    discordEditIntervalMs: integer(env, 'DISCORD_EDIT_INTERVAL_MS', 2500, 2000, 10000),
+    customAIStreaming: env.CUSTOM_AI_STREAMING === 'true',
     customAllowedBaseUrls: (env.CUSTOM_AI_ALLOWED_BASE_URLS || '').split(',').map(s => s.trim()).filter(Boolean),
   };
 }

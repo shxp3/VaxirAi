@@ -1,3 +1,6 @@
+import { DiscordStreamRenderer, type StreamPayload } from '../utils/discord-stream.js';
+import { RequestMetrics } from '../utils/request-metrics.js';
+import type { TextRequestOptions } from '../memory/conversations.js';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, Events, GatewayIntentBits, MessageFlags, Partials } from 'discord.js';
 import type { Env } from '../config/env.js';
 import type { Conversations } from '../memory/conversations.js';
@@ -37,10 +40,6 @@ function withRegenerate(parts: DiscordResponsePart[], ownerId: string): (Discord
     ...(index === parts.length - 1 ? { components: [regenerateRow(ownerId)] } : {}),
   }));
 }
-function stripComponents<T extends { components?: unknown }>(part: T): Omit<T, 'components'> {
-  const { components: _ignored, ...rest } = part;
-  return rest;
-}
 function startTypingLoop(channel: { sendTyping(): Promise<unknown> }): () => void {
   let stopped = false;
   void channel.sendTyping().catch(() => {});
@@ -61,6 +60,7 @@ export function createBot(env: Env, conversations: Conversations, admin: AdminCo
   });
   const lastTurns = new Map<string, { userMessageId: string; botMessageIds: string[] }>();
   const latestReplies = new Map<string, string[]>();
+  const renderOwners = new Map<string, symbol>();
   async function deleteOldReplies(channelLike: unknown, ids: string[]): Promise<void> {
     const messages = (channelLike as { messages?: { fetch(id: string): Promise<{ delete(): Promise<unknown> }> } } | null | undefined)?.messages;
     if (!messages || !ids.length) return;
@@ -71,15 +71,53 @@ export function createBot(env: Env, conversations: Conversations, admin: AdminCo
       } catch { /* already deleted or no access; new answer already sent */ }
     }
   }
-  function collectIds(first: { id?: string } | undefined | void, extras: ({ id?: string } | undefined | void)[]): string[] {
-    const ids: string[] = [];
-    if (first && typeof first.id === 'string') ids.push(first.id);
-    for (const extra of extras) if (extra && typeof extra.id === 'string') ids.push(extra.id);
-    return ids;
+  type ReplyTarget = { editReply(payload: unknown): Promise<{ id?: string } | void>; followUp(payload: unknown): Promise<{ id?: string } | void> };
+  function interactionRenderer(target: unknown, metrics: RequestMetrics): DiscordStreamRenderer {
+    const reply = target as ReplyTarget;
+    return new DiscordStreamRenderer({ acknowledge: async () => {}, edit: p => reply.editReply(p), send: p => reply.followUp(p) }, env.discordEditIntervalMs, 80, metrics);
+  }
+  function messageRenderer(target: unknown, metrics: RequestMetrics): DiscordStreamRenderer {
+    const reply = target as { reply(payload: unknown): Promise<{ id: string; edit?: (payload: unknown) => Promise<unknown> }>; channel?: { messages?: { fetch(id: string): Promise<{ edit(payload: unknown): Promise<unknown> }> } } };
+    let initial: { id: string; edit?: (payload: unknown) => Promise<unknown> } | undefined;
+    const edit = async (payload: StreamPayload) => {
+      if (!initial) initial = await reply.reply(payload);
+      else if (initial.edit) await initial.edit(payload);
+      else if (reply.channel?.messages) await (await reply.channel.messages.fetch(initial.id)).edit(payload);
+      else throw new AppError('channel_permissions');
+      return initial;
+    };
+    return new DiscordStreamRenderer({
+      acknowledge: async content => { initial = await reply.reply({ content, allowedMentions: { parse: [], repliedUser: false } }); return initial; },
+      edit, send: p => reply.reply(p),
+    }, env.discordEditIntervalMs, 80, metrics);
+  }
+  async function renderResponse(renderer: DiscordStreamRenderer, metrics: RequestMetrics, task: (options: TextRequestOptions) => Promise<string>, owner?: string, key?: string): Promise<string[] | null> {
+    const token = Symbol();
+    try {
+      const response = await task({ onEvent: async event => {
+        if (key && event.type === 'progress' && event.stage === 'request_started') renderOwners.set(key, token);
+        await renderer.onEvent(event);
+      }, metrics });
+      const parts = prepareDiscordResponse(response);
+      const ids = await renderer.finish(owner ? withRegenerate(parts, owner) : parts);
+      metrics.end();
+      // A later accepted request may finish while Discord is still sending this
+      // one's final answer. Its tracking and deletion targets must remain current.
+      return key && renderOwners.get(key) !== token ? null : ids;
+    } catch (error) {
+      safeLog('request_failed', error);
+      metrics.end(error instanceof AppError ? error.code : 'unavailable');
+      try { await renderer.fail(error); } catch { safeLog('discord_failed'); }
+      return null;
+    } finally {
+      renderer.dispose(); metrics.log();
+      if (key && renderOwners.get(key) === token) renderOwners.delete(key);
+    }
   }
   client.once(Events.ClientReady, () => safeLog('ready'));
   client.on(Events.Error, () => safeLog('discord_failed'));
   client.on(Events.InteractionCreate, async interaction => {
+    const receivedAt = Date.now();
     const isButtonInteraction = typeof (interaction as { isButton?: () => boolean }).isButton === 'function'
       ? (interaction as unknown as { isButton(): boolean }).isButton()
       : false;
@@ -110,25 +148,16 @@ export function createBot(env: Env, conversations: Conversations, admin: AdminCo
         const key = conversationKey(c);
         await conversations.assertChannel(c.guildId, c.channelId, threadParentId);
         await btn.deferReply();
+        const acknowledgmentAt = Date.now();
         const stopBtnTyping = startTypingForChannel(btn.channel);
         try {
-          let response: string;
-          try {
-            response = await conversations.regenerate(c);
-          } catch (error) {
-            safeLog('request_failed', error);
-            try { await btn.editReply(userError(error)); } catch { safeLog('discord_failed'); }
-            return;
-          }
-          const parts = withRegenerate(prepareDiscordResponse(response), effectiveUserId);
-          const first = await btn.editReply({ ...stripComponents(parts[0]!), components: parts[0]!.components, allowedMentions: { parse: [] } });
-          const extras: ({ id?: string } | void)[] = [];
-          for (const part of parts.slice(1)) {
-            extras.push(await btn.followUp({ ...stripComponents(part), components: (part as { components?: unknown[] }).components as never, allowedMentions: { parse: [] } }));
-          }
-          const ids = collectIds(first as { id?: string } | void, extras);
-          const oldIds = [...(latestReplies.get(key) ?? []), ...(btn.message?.id ? [btn.message.id] : [])].filter(id => !ids.includes(id));
+          const metrics = new RequestMetrics(receivedAt, acknowledgmentAt);
+          const ids = await renderResponse(interactionRenderer(btn, metrics), metrics, options => conversations.regenerate(c, options), effectiveUserId, key);
+          if (!ids) return;
+          const previousReplies = latestReplies.get(key);
+          const oldIds = [...(previousReplies ?? []), ...(btn.message?.id ? [btn.message.id] : [])].filter(id => !ids.includes(id));
           await deleteOldReplies(btn.channel, oldIds);
+          if (latestReplies.get(key) !== previousReplies) return;
           if (ids.length) latestReplies.set(key, ids);
           else latestReplies.delete(key);
           const tracked = lastTurns.get(key);
@@ -161,6 +190,7 @@ export function createBot(env: Env, conversations: Conversations, admin: AdminCo
         return;
       }
       await interaction.deferReply({ flags: interaction.commandName === 'clear' ? MessageFlags.Ephemeral : undefined });
+      const acknowledgmentAt = Date.now();
       const threadParentId = getThreadParentId((interaction as { channel?: unknown }).channel);
       const c = { guildId: interaction.guildId, channelId: interaction.channelId, userId: interaction.user.id, threadParentId };
       const key = conversationKey(c);
@@ -171,21 +201,21 @@ export function createBot(env: Env, conversations: Conversations, admin: AdminCo
       try {
         if (interaction.commandName === 'regenerate') {
           await conversations.assertChannel(c.guildId, c.channelId, threadParentId);
-          const parts = withRegenerate(prepareDiscordResponse(await conversations.regenerate(c)), c.userId);
+          const metrics = new RequestMetrics(receivedAt, acknowledgmentAt);
+          const ids = await renderResponse(interactionRenderer(interaction, metrics), metrics, options => conversations.regenerate(c, options), c.userId, key);
+          if (!ids) return;
+          const previousReplies = latestReplies.get(key);
+          await deleteOldReplies((interaction as { channel?: unknown }).channel, (previousReplies ?? []).filter(id => !ids.includes(id)));
+          if (latestReplies.get(key) !== previousReplies) return;
           lastTurns.delete(key);
-          const first = await interaction.editReply({ ...stripComponents(parts[0]!), components: parts[0]!.components, allowedMentions: { parse: [] } }) as { id?: string } | void;
-          const extras: ({ id?: string } | void)[] = [];
-          for (const part of parts.slice(1)) extras.push(await interaction.followUp({ ...stripComponents(part), components: (part as { components?: unknown[] }).components as never, allowedMentions: { parse: [] } }) as { id?: string } | void);
-          const ids = collectIds(first, extras);
           if (ids.length) latestReplies.set(key, ids);
           else latestReplies.delete(key);
           return;
         }
         if (interaction.commandName === 'summarize') {
           await conversations.assertChannel(c.guildId, c.channelId, threadParentId);
-          const parts = prepareDiscordResponse(await conversations.summarize(c));
-          await interaction.editReply({ ...parts[0]!, allowedMentions: { parse: [] } });
-          for (const part of parts.slice(1)) await interaction.followUp({ ...part, allowedMentions: { parse: [] } });
+          const metrics = new RequestMetrics(receivedAt, acknowledgmentAt);
+          await renderResponse(interactionRenderer(interaction, metrics), metrics, options => conversations.summarize(c, options));
           return;
         }
         if (interaction.commandName === 'imagine') {
@@ -211,20 +241,16 @@ export function createBot(env: Env, conversations: Conversations, admin: AdminCo
         await conversations.assertChannel(c.guildId, c.channelId, threadParentId);
         const attachment = interaction.options.getAttachment('file');
         const request = await buildRequestWithAttachments(interaction.options.getString('message') ?? '', attachment ? [attachment as TextAttachment] : [], env);
-        let askPrompt = request.prompt;
-        try {
-          const existing = await conversations.repository.getMessages(c, Date.now() - env.memoryTtlHours * 3600000);
-          if (!existing.length) {
+        const metrics = new RequestMetrics(receivedAt, acknowledgmentAt);
+        const askIds = await renderResponse(interactionRenderer(interaction, metrics), metrics, options => conversations.ask(c, request.prompt, request.images, {
+          ...options, preparePrompt: async (prompt, history) => {
+            if (history.length) return prompt;
             const seed = await fetchThreadSeed((interaction as { channel?: unknown }).channel);
-            if (seed) askPrompt = combinePromptWithContext(askPrompt, [seed], env.maxPromptChars);
-          }
-        } catch { /* seed is best-effort; ask with original prompt */ }
-        const parts = withRegenerate(prepareDiscordResponse(await conversations.ask(c, askPrompt, request.images)), c.userId);
+            return seed ? combinePromptWithContext(prompt, [seed], env.maxPromptChars) : prompt;
+          },
+        }), c.userId, key);
+        if (!askIds) return;
         lastTurns.delete(key);
-        const firstAsk = await interaction.editReply({ ...stripComponents(parts[0]!), components: parts[0]!.components, allowedMentions: { parse: [] } }) as { id?: string } | void;
-        const askExtras: ({ id?: string } | void)[] = [];
-        for (const part of parts.slice(1)) askExtras.push(await interaction.followUp({ ...stripComponents(part), components: (part as { components?: unknown[] }).components as never, allowedMentions: { parse: [] } }) as { id?: string } | void);
-        const askIds = collectIds(firstAsk, askExtras);
         if (askIds.length) latestReplies.set(key, askIds);
         else latestReplies.delete(key);
       } finally {
@@ -239,6 +265,7 @@ export function createBot(env: Env, conversations: Conversations, admin: AdminCo
     }
   });
   client.on(Events.MessageCreate, async message => {
+    const receivedAt = Date.now();
     if (!message.guildId || message.author.bot || message.webhookId) return;
     let invoked = false;
     try {
@@ -254,21 +281,16 @@ export function createBot(env: Env, conversations: Conversations, admin: AdminCo
         const request = await buildRequestWithAttachments(removeBotMention(message.content, client.user!.id), message.attachments.values() as Iterable<TextAttachment>, env);
         const c = { guildId: message.guildId, channelId: message.channelId, userId: message.author.id, threadParentId };
         const key = conversationKey(c);
-        let prompt = request.prompt;
-        try {
-          const contexts: (string | null)[] = [await fetchReplyContext(message)];
-          const existing = await conversations.repository.getMessages(c, Date.now() - env.memoryTtlHours * 3600000);
-          if (!existing.length) contexts.push(await fetchThreadSeed(message.channel));
-          const combined = combinePromptWithContext(prompt, contexts, env.maxPromptChars);
-          if (combined.length <= env.maxPromptChars) prompt = combined;
-        } catch { /* context is best-effort */ }
-        const response = await conversations.ask(c, prompt, request.images);
-        const parts = withRegenerate(prepareDiscordResponse(response), c.userId);
-        const ids: string[] = [];
-        for (const part of parts) {
-          const sent = await message.reply({ ...stripComponents(part), components: (part as { components?: unknown[] }).components as never, allowedMentions: { parse: [], repliedUser: false } });
-          ids.push(sent.id);
-        }
+        const metrics = new RequestMetrics(receivedAt);
+        const renderer = messageRenderer(message, metrics);
+        const ids = await renderResponse(renderer, metrics, options => conversations.ask(c, request.prompt, request.images, {
+          ...options, preparePrompt: async (prompt, history) => {
+            const contexts = await Promise.all([fetchReplyContext(message), history.length ? Promise.resolve(null) : fetchThreadSeed(message.channel, 3000, renderer.messageId ? [renderer.messageId] : [])]);
+            const combined = combinePromptWithContext(prompt, contexts, env.maxPromptChars);
+            return combined.length <= env.maxPromptChars ? combined : prompt;
+          },
+        }), c.userId, key);
+        if (!ids) return;
         lastTurns.set(key, { userMessageId: message.id, botMessageIds: ids });
         if (ids.length) latestReplies.set(key, ids);
         else latestReplies.delete(key);
@@ -281,6 +303,7 @@ export function createBot(env: Env, conversations: Conversations, admin: AdminCo
     }
   });
   client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
+    const receivedAt = Date.now();
     try {
       if (newMessage.partial) {
         try { newMessage = await newMessage.fetch(); } catch { return; }
@@ -308,46 +331,17 @@ export function createBot(env: Env, conversations: Conversations, admin: AdminCo
       const stopTyping = startTypingLoop(newMessage.channel as { sendTyping(): Promise<unknown> });
       try {
         const request = await buildRequestWithAttachments(raw, newMessage.attachments.values() as Iterable<TextAttachment>, env);
-        let editPrompt = request.prompt;
-        try {
-          const replyCtx = await fetchReplyContext(newMessage);
-          if (replyCtx) {
-            const combined = combinePromptWithContext(editPrompt, [replyCtx], env.maxPromptChars);
-            if (combined.length <= env.maxPromptChars) editPrompt = combined;
-          }
-        } catch { /* reply context is best-effort */ }
-        let response: string;
-        try {
-          response = await conversations.editLast(c, editPrompt, request.images);
-        } catch (error) {
-          if (error instanceof AppError && error.code === 'busy') return;
-          throw error;
-        }
-        const parts = withRegenerate(prepareDiscordResponse(response), c.userId);
-        const channelMessages = (newMessage.channel as { messages: { fetch(id: string): Promise<{ edit(payload: unknown): Promise<unknown>; delete(): Promise<unknown> }> } }).messages;
-        const nextIds: string[] = [];
-        const common = Math.min(tracked.botMessageIds.length, parts.length);
-        for (let i = 0; i < common; i++) {
-          try {
-            const botMsg = await channelMessages.fetch(tracked.botMessageIds[i]!);
-            const part = parts[i]!;
-            await botMsg.edit({ ...stripComponents(part), components: (part as { components?: unknown[] }).components as never, allowedMentions: { parse: [], repliedUser: false } });
-            nextIds.push(tracked.botMessageIds[i]!);
-          } catch {
-            const sent = await (newMessage as unknown as { reply(payload: unknown): Promise<{ id: string }> }).reply({ ...stripComponents(parts[i]!), components: (parts[i] as { components?: unknown[] }).components as never, allowedMentions: { parse: [], repliedUser: false } });
-            nextIds.push(sent.id);
-          }
-        }
-        if (parts.length > tracked.botMessageIds.length) {
-          for (const part of parts.slice(tracked.botMessageIds.length)) {
-            const sent = await (newMessage as unknown as { reply(payload: unknown): Promise<{ id: string }> }).reply({ ...stripComponents(part), components: (part as { components?: unknown[] }).components as never, allowedMentions: { parse: [], repliedUser: false } });
-            nextIds.push(sent.id);
-          }
-        } else if (tracked.botMessageIds.length > parts.length) {
-          for (const id of tracked.botMessageIds.slice(parts.length)) {
-            try { (await channelMessages.fetch(id)).delete().catch(() => {}); } catch { /* already gone */ }
-          }
-        }
+        const metrics = new RequestMetrics(receivedAt);
+        const nextIds = await renderResponse(messageRenderer(newMessage, metrics), metrics, options => conversations.editLast(c, request.prompt, request.images, {
+          ...options, preparePrompt: async prompt => {
+            const context = await fetchReplyContext(newMessage);
+            const combined = combinePromptWithContext(prompt, [context], env.maxPromptChars);
+            return combined.length <= env.maxPromptChars ? combined : prompt;
+          },
+        }), c.userId, key);
+        if (!nextIds) return;
+        await deleteOldReplies(newMessage.channel, tracked.botMessageIds.filter(id => !nextIds.includes(id)));
+        if (lastTurns.get(key) !== tracked) return;
         lastTurns.set(key, { userMessageId: newMessage.id, botMessageIds: nextIds.length ? nextIds : tracked.botMessageIds });
         if (nextIds.length) latestReplies.set(key, nextIds);
       } finally { stopTyping(); }

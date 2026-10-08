@@ -226,3 +226,6 @@ Dockerfile/Compose เตรียมไว้ แต่ยังไม่ได
 6. ทดสอบเกิน user limit และ key/model ผิด ได้ข้อความที่เข้าใจได้โดยไม่มี secret
 7. Restart แล้ว settings/context ยังอยู่; ปิด AI แล้วไม่ยิง provider
 8. ตรวจบน deployment จริง รวม restart, storage, สิทธิ์ห้อง และค่าใช้จ่าย/ทรัพยากร
+
+Progress updates, streaming protocols, timeout behavior, configuration and diagnostics
+are documented in [docs/streaming.md](docs/streaming.md).

@@ -1,5 +1,7 @@
+import { abortable, abortError, deadline } from '../ai/lifecycle.js';
+import { RequestMetrics } from '../utils/request-metrics.js';
 import type { Env } from '../config/env.js';
-import type { AIProvider, ProviderConfig, Message, ImageContent, GenerationSettings } from '../ai/types.js';
+import type { AIProvider, ProviderConfig, Message, ImageContent, GenerationSettings, GenerationOptions, GenerationEvent } from '../ai/types.js';
 import { isEffortLevel, settingsForEffort } from '../ai/effort.js';
 import { conversationKey, type Conversation, type Repository, type GuildSettings } from '../database/repository.js';
 import { AppError } from '../utils/errors.js';
@@ -27,7 +29,12 @@ export function assertAIChannel(settings: GuildSettings, channelId: string, thre
   if (threadParentId && threadParentId === settings.aiChannelId) return;
   throw new AppError('wrong_ai_channel', undefined, settings.aiChannelId);
 }
+export interface TextRequestOptions extends GenerationOptions {
+  metrics?: RequestMetrics;
+  preparePrompt?: (prompt: string, history: Message[], signal: AbortSignal) => Promise<string>;
+}
 export class Conversations {
+  private controllers = new Map<string, AbortController>();
   private active = new Set<string>();
   private limiter: RateLimiter;
   private usageTotal = 0;
@@ -56,158 +63,148 @@ export class Conversations {
     if (code === 'quota' || code === 'gateway_blocked') guild.quota++;
     this.usageByGuild.set(guildId, guild);
   }
-  async ask(c: Conversation, input: string, images: ImageContent[] = []): Promise<string> {
-    const prompt = input.trim();
-    if (!prompt || prompt.length > this.env.maxPromptChars) throw new AppError('input');
+  cancel(c: Conversation): boolean {
+    const controller = this.controllers.get(conversationKey(c));
+    if (!controller) return false;
+    controller.abort(new AppError('cancelled'));
+    return true;
+  }
+  async ask(c: Conversation, input: string, images: ImageContent[] = [], options?: TextRequestOptions): Promise<string> {
+    return this.textRequest('ask', c, input, images, options);
+  }
+  async regenerate(c: Conversation, options?: TextRequestOptions): Promise<string> {
+    return this.textRequest('regenerate', c, '', [], options);
+  }
+  async editLast(c: Conversation, input: string, images: ImageContent[] = [], options?: TextRequestOptions): Promise<string> {
+    return this.textRequest('edit', c, input, images, options);
+  }
+  async summarize(c: Conversation, options?: TextRequestOptions): Promise<string> {
+    return this.textRequest('summarize', c, '', [], options);
+  }
+  private async textRequest(kind: 'ask' | 'edit' | 'regenerate' | 'summarize', c: Conversation, input: string, images: ImageContent[], options?: TextRequestOptions): Promise<string> {
+    let prompt = input.trim();
+    if ((kind === 'ask' || kind === 'edit') && (!prompt || prompt.length > this.env.maxPromptChars)) throw new AppError('input');
     const key = conversationKey(c);
     if (this.active.has(key) || this.active.size >= this.env.maxConcurrentRequests) throw new AppError('busy');
     this.active.add(key);
+    const metrics = options?.metrics ?? new RequestMetrics();
+    let scope: ReturnType<typeof deadline> | undefined;
+    let accepted = false;
+    let streamed = false;
+    let providerCompleted = false;
+    let firstOutputNotified = false;
+    let lastProgress = 0;
+    let lastRevisionCheck = Date.now();
     try {
       const settings = await this.settings(c.guildId);
       if (!settings.enabled) throw new AppError('disabled');
       assertAIChannel(settings, c.channelId, c.threadParentId);
       const { provider, config, grounder } = this.resolveAI(settings, c.guildId);
       if (!config.apiKey || !config.model) throw new AppError('config');
-      try {
-        this.limiter.consume([{ key: `user:${c.userId}`, limit: settings.userRateLimit }, { key: 'global', limit: this.env.globalRateLimit }]);
-      } catch (error) {
-        this.recordUsage(c.guildId, error instanceof AppError ? error.code : 'limited');
-        throw error;
-      }
-      const limit = Math.floor(settings.contextMessageLimit / 2) * 2;
-      const history = limit ? (await this.repository.getMessages(c, Date.now() - this.env.memoryTtlHours * 3600000)).slice(-limit) : [];
-      const joke = images.length ? null : friendReply(prompt);
-      const grounding = !joke && grounder && (this.env.search.mode === 'always' || grounder.shouldSearch(prompt)) ? await grounder.search(prompt) : null;
-      const groundedPrompt = grounding ? `${prompt}\n\n${grounding.context}` : prompt;
-      let response: string;
-      try {
-        const generated = joke ?? await provider.generate([...history, { role: 'user', content: groundedPrompt, ...(images.length ? { images } : {}) }], config, this.effortSettings(settings));
-        const sourceList = grounding?.sources.length && wantsSources(prompt) ? `\n\nแหล่งข้อมูลจากการค้นเว็บ:\n${grounding.sources.map(source => `- [${source.index}] <${source.url}>${source.title ? ` — ${source.title}` : ''}`).join('\n')}` : '';
-        response = generated + sourceList;
-      } catch (error) {
-        this.recordUsage(c.guildId, error instanceof AppError ? error.code : 'unavailable');
-        throw error;
-      }
-      if ((await this.settings(c.guildId)).revision !== settings.revision) throw new AppError('busy');
-      const updated: Message[] = [...history, { role: 'user', content: prompt }, { role: 'assistant', content: response }];
-      if (limit) await this.repository.saveMessages(c, updated.slice(-limit), Date.now());
-      this.recordUsage(c.guildId, null);
-      return response;
-    } finally { this.active.delete(key); }
-  }
-  async regenerate(c: Conversation): Promise<string> {
-    const key = conversationKey(c);
-    if (this.active.has(key) || this.active.size >= this.env.maxConcurrentRequests) throw new AppError('busy');
-    this.active.add(key);
-    try {
-      const settings = await this.settings(c.guildId);
-      if (!settings.enabled) throw new AppError('disabled');
-      assertAIChannel(settings, c.channelId, c.threadParentId);
-      const { provider, config } = this.resolveAI(settings, c.guildId);
-      if (!config.apiKey || !config.model) throw new AppError('config');
-      try {
-        this.limiter.consume([{ key: `user:${c.userId}`, limit: settings.userRateLimit }, { key: 'global', limit: this.env.globalRateLimit }]);
-      } catch (error) {
-        this.recordUsage(c.guildId, error instanceof AppError ? error.code : 'limited');
-        throw error;
-      }
-      const limit = Math.floor(settings.contextMessageLimit / 2) * 2;
-      const history = limit ? (await this.repository.getMessages(c, Date.now() - this.env.memoryTtlHours * 3600000)).slice(-limit) : [];
-      if (!history.length) throw new AppError('input');
-      const lastUser = [...history].reverse().find(m => m.role === 'user');
-      if (!lastUser) throw new AppError('input');
-      const base = history[history.length - 1]?.role === 'assistant' ? history.slice(0, -1) : history;
-      let response: string;
-      try {
-        response = await provider.generate(base, config, this.effortSettings(settings));
-      } catch (error) {
-        this.recordUsage(c.guildId, error instanceof AppError ? error.code : 'unavailable');
-        throw error;
-      }
-      if ((await this.settings(c.guildId)).revision !== settings.revision) throw new AppError('busy');
-      const updated: Message[] = [...base, { role: 'assistant', content: response }];
-      if (limit) await this.repository.saveMessages(c, updated.slice(-limit), Date.now());
-      this.recordUsage(c.guildId, null);
-      return response;
-    } finally { this.active.delete(key); }
-  }
-  async editLast(c: Conversation, input: string, images: ImageContent[] = []): Promise<string> {
-    const prompt = input.trim();
-    if (!prompt || prompt.length > this.env.maxPromptChars) throw new AppError('input');
-    const key = conversationKey(c);
-    if (this.active.has(key) || this.active.size >= this.env.maxConcurrentRequests) throw new AppError('busy');
-    this.active.add(key);
-    try {
-      const settings = await this.settings(c.guildId);
-      if (!settings.enabled) throw new AppError('disabled');
-      assertAIChannel(settings, c.channelId, c.threadParentId);
-      const { provider, config, grounder } = this.resolveAI(settings, c.guildId);
-      if (!config.apiKey || !config.model) throw new AppError('config');
-      try {
-        this.limiter.consume([{ key: `user:${c.userId}`, limit: settings.userRateLimit }, { key: 'global', limit: this.env.globalRateLimit }]);
-      } catch (error) {
-        this.recordUsage(c.guildId, error instanceof AppError ? error.code : 'limited');
-        throw error;
-      }
-      const limit = Math.floor(settings.contextMessageLimit / 2) * 2;
-      const history = limit ? (await this.repository.getMessages(c, Date.now() - this.env.memoryTtlHours * 3600000)).slice(-limit) : [];
-      let baseHistory: Message[] = [];
-      if (history.length) {
-        let lastUserIdx = -1;
-        for (let i = history.length - 1; i >= 0; i--) {
-          if (history[i]?.role === 'user') { lastUserIdx = i; break; }
+      this.limiter.consume([{ key: `user:${c.userId}`, limit: settings.userRateLimit }, { key: 'global', limit: this.env.globalRateLimit }]);
+      const generation = this.effortSettings(settings);
+      scope = deadline(generation.timeoutMs, options?.signal);
+      this.controllers.set(key, scope.controller);
+      metrics.provider = config.provider;
+      const signal = scope.signal;
+      const event = async (value: GenerationEvent) => {
+        if (signal.aborted) throw abortError(signal);
+        // Check revision at most once per second, rather than on every token.
+        if (Date.now() - lastRevisionCheck >= 1000) {
+          lastRevisionCheck = Date.now();
+          if ((await this.settings(c.guildId)).revision !== settings.revision) {
+            scope!.controller.abort(new AppError('cancelled'));
+            throw new AppError('cancelled');
+          }
         }
-        baseHistory = lastUserIdx >= 0 ? history.slice(0, lastUserIdx) : [];
-      }
-      const joke = images.length ? null : friendReply(prompt);
-      const grounding = !joke && grounder && (this.env.search.mode === 'always' || grounder.shouldSearch(prompt)) ? await grounder.search(prompt) : null;
-      const groundedPrompt = grounding ? `${prompt}\n\n${grounding.context}` : prompt;
-      let response: string;
-      try {
-        const generated = joke ?? await provider.generate([...baseHistory, { role: 'user', content: groundedPrompt, ...(images.length ? { images } : {}) }], config, this.effortSettings(settings));
-        const sourceList = grounding?.sources.length && wantsSources(prompt) ? `\n\nแหล่งข้อมูลจากการค้นเว็บ:\n${grounding.sources.map(source => `- [${source.index}] <${source.url}>${source.title ? ` — ${source.title}` : ''}`).join('\n')}` : '';
-        response = generated + sourceList;
-      } catch (error) {
-        this.recordUsage(c.guildId, error instanceof AppError ? error.code : 'unavailable');
-        throw error;
-      }
-      if ((await this.settings(c.guildId)).revision !== settings.revision) throw new AppError('busy');
-      const updated: Message[] = [...baseHistory, { role: 'user', content: prompt }, { role: 'assistant', content: response }];
-      if (limit) await this.repository.saveMessages(c, updated.slice(-limit), Date.now());
-      this.recordUsage(c.guildId, null);
-      return response;
-    } finally { this.active.delete(key); }
-  }
-  async summarize(c: Conversation): Promise<string> {
-    const key = conversationKey(c);
-    if (this.active.has(key) || this.active.size >= this.env.maxConcurrentRequests) throw new AppError('busy');
-    this.active.add(key);
-    try {
-      const settings = await this.settings(c.guildId);
-      if (!settings.enabled) throw new AppError('disabled');
-      assertAIChannel(settings, c.channelId, c.threadParentId);
-      const { provider, config } = this.resolveAI(settings, c.guildId);
-      if (!config.apiKey || !config.model) throw new AppError('config');
-      try {
-        this.limiter.consume([{ key: `user:${c.userId}`, limit: settings.userRateLimit }, { key: 'global', limit: this.env.globalRateLimit }]);
-      } catch (error) {
-        this.recordUsage(c.guildId, error instanceof AppError ? error.code : 'limited');
-        throw error;
-      }
+        metrics.note(value);
+        if (value.type === 'progress' && value.stage === 'first_output') firstOutputNotified = true;
+        if (value.type === 'text_delta' && value.text) {
+          if (!firstOutputNotified) {
+            firstOutputNotified = true;
+            metrics.note({ type: 'progress', stage: 'first_output' });
+            await abortable(Promise.resolve(options?.onEvent?.({ type: 'progress', stage: 'first_output' })), signal);
+          }
+          streamed = true;
+        }
+        if (value.type === 'provider_completed') providerCompleted = true;
+        await abortable(Promise.resolve(options?.onEvent?.(value)), signal);
+        if (value.type === 'text_delta' && Date.now() - lastProgress >= 1000) {
+          lastProgress = Date.now();
+          await abortable(Promise.resolve(options?.onEvent?.({ type: 'progress', stage: 'generation_progress' })), signal);
+        }
+      };
+      const start = async () => {
+        accepted = true;
+        await event({ type: 'progress', stage: 'request_started' });
+      };
+      if (kind === 'ask' || kind === 'edit') await start();
       const limit = Math.floor(settings.contextMessageLimit / 2) * 2;
-      const history = limit ? (await this.repository.getMessages(c, Date.now() - this.env.memoryTtlHours * 3600000)).slice(-limit) : [];
-      if (!history.length) throw new AppError('input');
-      let response: string;
-      try {
-        response = await provider.generate([...history, { role: 'user', content: 'Summarize this conversation concisely in the user language. Keep code identifiers intact.' }], config, this.effortSettings(settings));
-      } catch (error) {
-        this.recordUsage(c.guildId, error instanceof AppError ? error.code : 'unavailable');
-        throw error;
+      const history = limit ? (await abortable(this.repository.getMessages(c, Date.now() - this.env.memoryTtlHours * 3600000), signal)).slice(-limit) : [];
+      if ((kind === 'ask' || kind === 'edit') && options?.preparePrompt) {
+        prompt = (await abortable(options.preparePrompt(prompt, history, signal), signal)).trim();
+        if (!prompt || prompt.length > this.env.maxPromptChars) throw new AppError('input');
       }
-      if ((await this.settings(c.guildId)).revision !== settings.revision) throw new AppError('busy');
+      let base: Message[] = history;
+      if (kind === 'regenerate' || kind === 'summarize') {
+        if (!history.length || !history.some(m => m.role === 'user')) throw new AppError('input');
+        if (kind === 'regenerate' && history.at(-1)?.role === 'assistant') base = history.slice(0, -1);
+        await start();
+      } else if (kind === 'edit') {
+        const index = history.findLastIndex(m => m.role === 'user');
+        base = index < 0 ? [] : history.slice(0, index);
+      }
+      const joke = (kind === 'ask' || kind === 'edit') && !images.length ? friendReply(prompt) : null;
+      let grounding = null;
+      if (!joke && (kind === 'ask' || kind === 'edit') && grounder && (this.env.search.mode === 'always' || grounder.shouldSearch(prompt))) {
+        await event({ type: 'progress', stage: 'search_started' });
+        grounding = await abortable(grounder.search(prompt, { signal, timeoutMs: scope.remaining() }), signal);
+        await event({ type: 'progress', stage: 'search_completed', found: !!grounding?.sources.length });
+      }
+      let messages = base;
+      if (kind === 'ask' || kind === 'edit') messages = [...base, { role: 'user', content: grounding ? `${prompt}\n\n${grounding.context}` : prompt, ...(images.length ? { images } : {}) }];
+      if (kind === 'summarize') messages = [...history, { role: 'user', content: 'Summarize this conversation concisely in the user language. Keep code identifiers intact.' }];
+      if (!provider.queued) await event({ type: 'progress', stage: 'generation_started' });
+      const generated = joke ?? await abortable(provider.generate(messages, config, { ...generation, timeoutMs: scope.remaining() }, { ...options, signal, onEvent: event }), signal);
+      if (!streamed) await event({ type: 'text_delta', text: generated });
+      if (!providerCompleted) await event({ type: 'provider_completed' });
+      const sourceList = grounding?.sources.length && wantsSources(prompt) ? `\n\nแหล่งข้อมูลจากการค้นเว็บ:\n${grounding.sources.map(source => `- [${source.index}] <${source.url}>${source.title ? ` — ${source.title}` : ''}`).join('\n')}` : '';
+      const response = generated + sourceList;
+      await event({ type: 'progress', stage: 'formatting_response' });
+      if ((await abortable(this.settings(c.guildId), signal)).revision !== settings.revision) throw new AppError('busy');
+      if (signal.aborted) throw abortError(signal);
+      if (limit && kind !== 'summarize') {
+        const updated: Message[] = kind === 'regenerate' ? [...base, { role: 'assistant', content: response }]
+          : [...base, { role: 'user', content: prompt }, { role: 'assistant', content: response }];
+        // Commit only complete, current output; no partial answers enter memory.
+        await this.repository.saveMessages(c, updated.slice(-limit), Date.now());
+      }
+      // The commit is the success boundary; notification cannot turn committed
+      // memory into a failed request or count usage twice.
       this.recordUsage(c.guildId, null);
+      metrics.note({ type: 'progress', stage: 'completed' });
+      try { await abortable(Promise.resolve(options?.onEvent?.({ type: 'progress', stage: 'completed' })), signal); } catch { /* memory already committed */ }
+      metrics.end();
       return response;
-    } finally { this.active.delete(key); }
+    } catch (error) {
+      const code = error instanceof AppError ? error.code : 'unavailable';
+      if (accepted || code === 'limited') this.recordUsage(c.guildId, code);
+      metrics.end(code);
+      if (accepted) {
+        try {
+          const notified = Promise.resolve(options?.onEvent?.({ type: 'progress', stage: code === 'cancelled' ? 'cancelled' : 'failed', code }));
+          if (scope) await abortable(notified, scope.signal);
+          else await notified;
+        } catch { /* keep the original error and release the conversation lock */ }
+      }
+      throw error;
+    } finally {
+      scope?.controller.abort(new AppError('cancelled'));
+      scope?.close();
+      this.controllers.delete(key);
+      this.active.delete(key);
+      if (accepted && !options?.metrics) metrics.log();
+    }
   }
   async imagine(c: Conversation, prompt: string, aspectRatio?: string, references: { dataUrl: string; url: string }[] = []): Promise<GeneratedImage> {
     const text = cleanImagePrompt(prompt);

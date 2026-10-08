@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { abortable, deadline, emit } from './lifecycle.js';
+import type { GenerationOptions } from './types.js';
 import { AppError } from '../utils/errors.js';
 import type { AIProvider, ProviderConfig } from './types.js';
 
@@ -37,7 +39,7 @@ export class ProviderRequestQueue {
     return count;
   }
 
-  async run<T>(key: string, timeoutMs: number, intervalMs: number, task: (remainingMs: number) => Promise<T>): Promise<T> {
+  async run<T>(key: string, timeoutMs: number, intervalMs: number, task: (remainingMs: number, signal: AbortSignal) => Promise<T>, options?: GenerationOptions): Promise<T> {
     const now = Date.now();
     for (const [id, bucket] of this.buckets) {
       if (!bucket.pending && Math.max(bucket.nextStart, bucket.blockedUntil) <= now) this.buckets.delete(id);
@@ -54,17 +56,22 @@ export class ProviderRequestQueue {
     };
     checkCooldown();
     if (state.pending >= 8) throw new AppError('busy');
-    const deadline = now + timeoutMs;
+    const expires = now + timeoutMs;
+    const scope = deadline(timeoutMs, options?.signal);
     state.pending++;
     const job = state.tail.then(async () => {
+      scope.signal.throwIfAborted();
       checkCooldown();
-      if (Math.max(Date.now(), state.nextStart) >= deadline) throw new AppError('timeout');
-      while (state.nextStart > Date.now()) await delay(state.nextStart - Date.now());
+      if (Math.max(Date.now(), state.nextStart) >= expires) throw new AppError('timeout');
+      while (state.nextStart > Date.now()) await delay(state.nextStart - Date.now(), undefined, { signal: scope.signal });
       checkCooldown();
-      const remaining = deadline - Date.now();
+      const remaining = expires - Date.now();
       if (remaining <= 0) throw new AppError('timeout');
       state.nextStart = Date.now() + intervalMs;
-      try { return await task(remaining); }
+      try {
+        await abortable(emit({ ...options, signal: scope.signal }, { type: 'progress', stage: 'generation_started' }), scope.signal);
+        return await abortable(task(remaining, scope.signal), scope.signal);
+      }
       catch (error) {
         if (error instanceof AppError && (error.code === 'quota' || error.code === 'gateway_blocked')) {
           const seconds = error.retryAfter ?? (error.code === 'quota' ? 60 : 300);
@@ -76,13 +83,12 @@ export class ProviderRequestQueue {
       }
     });
     state.tail = job.then(() => {}, () => {}).finally(() => { state.pending--; });
-    // A queued caller times out promptly; its expired job will never call the API.
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Caller expiry aborts active work and leaves an expired FIFO placeholder that
+    // cannot execute. Other credentials use independent buckets.
     try {
-      return await Promise.race([job, new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new AppError('timeout')), timeoutMs);
-      })]);
-    } finally { clearTimeout(timer); }
+      if (state.pending > 1 || state.nextStart > now) await abortable(emit(options, { type: 'progress', stage: 'queue_waiting' }), scope.signal);
+      return await abortable(job, scope.signal);
+    } finally { scope.controller.abort(new AppError('cancelled')); scope.close(); }
   }
 }
 
@@ -91,8 +97,8 @@ export function queueCooldownForConfig(config: ProviderConfig): { code: 'quota' 
   try { return sharedQueue.cooldown(providerQueueKey(config)); } catch { return null; }
 }
 export function queuedProvider(provider: AIProvider, intervalMs = 3000, queue = sharedQueue): AIProvider {
-  const generate: AIProvider['generate'] = (messages, config, settings) => queue.run(providerQueueKey(config), settings.timeoutMs, intervalMs,
-    remainingMs => provider.generate(messages, config, { ...settings, timeoutMs: remainingMs }));
+  const generate: AIProvider['generate'] = (messages, config, settings, options) => queue.run(providerQueueKey(config), settings.timeoutMs, intervalMs,
+    (remainingMs, signal) => provider.generate(messages, config, { ...settings, timeoutMs: remainingMs }, { ...options, signal }), options);
   // Preserve adapter identity for callers that inspect the resolved API protocol.
-  return new Proxy(provider, { get: (target, property, receiver) => property === 'generate' ? generate : Reflect.get(target, property, receiver) });
+  return new Proxy(provider, { get: (target, property, receiver) => property === 'generate' ? generate : property === 'queued' ? true : Reflect.get(target, property, receiver) });
 }

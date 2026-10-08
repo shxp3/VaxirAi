@@ -82,7 +82,7 @@ export class BraveGrounder implements WebGrounder {
 
   shouldSearch(query: string): boolean { return CURRENT_PATTERNS.some(pattern => pattern.test(query)); }
 
-  async search(input: string): Promise<GroundingResult | null> {
+  async search(input: string, options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<GroundingResult | null> {
     const q = searchQuery(input);
     if (!q) return null;
     let data: any;
@@ -90,8 +90,9 @@ export class BraveGrounder implements WebGrounder {
       data = await requestJson(ENDPOINT, { 'x-subscription-token': this.apiKey, accept: 'application/json', 'api-version': '2026-02-06' }, {
         q, country: this.country, search_lang: this.language, count: 20,
         maximum_number_of_urls: 10, maximum_number_of_tokens: 4096,
-      }, this.timeoutMs, this.transport);
+      }, Math.min(this.timeoutMs, options?.timeoutMs ?? this.timeoutMs), this.transport, options);
     } catch (error) {
+      if (error instanceof AppError && ['timeout', 'cancelled'].includes(error.code)) throw error;
       if (error instanceof AppError && error.code === 'auth') throw new AppError('search_auth');
       if (error instanceof AppError && error.code === 'quota') throw new AppError('search_quota', error.retryAfter);
       throw new AppError('search_unavailable');

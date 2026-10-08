@@ -1,10 +1,12 @@
-export type ErrorCode = 'quota' | 'timeout' | 'auth' | 'model' | 'unavailable' | 'malformed' | 'input' | 'limited' | 'disabled' | 'config' | 'busy' | 'intent' | 'channel_permissions' | 'wrong_ai_channel' | 'too_large' | 'gateway_blocked' | 'search_auth' | 'search_quota' | 'search_unavailable' | 'file_type' | 'file_size' | 'file_count' | 'file_download' | 'file_encoding';
+export type ErrorCode = 'cancelled' | 'incomplete' | 'quota' | 'timeout' | 'auth' | 'model' | 'unavailable' | 'malformed' | 'input' | 'limited' | 'disabled' | 'config' | 'busy' | 'intent' | 'channel_permissions' | 'wrong_ai_channel' | 'too_large' | 'gateway_blocked' | 'search_auth' | 'search_quota' | 'search_unavailable' | 'file_type' | 'file_size' | 'file_count' | 'file_download' | 'file_encoding';
 export class AppError extends Error {
   constructor(public readonly code: ErrorCode, public readonly retryAfter?: number, public readonly channelId?: string) { super(code); }
 }
 export function userError(error: unknown): string {
   const code = error instanceof AppError ? error.code : 'unavailable';
   const messages: Record<ErrorCode, string> = {
+    cancelled: 'คำขอถูกยกเลิกแล้ว',
+    incomplete: 'คำตอบยังไม่สมบูรณ์ ผู้ให้บริการหยุดก่อนสร้างคำตอบเสร็จ',
     wrong_ai_channel: 'เซิร์ฟเวอร์นี้อนุญาตให้ใช้ AI เฉพาะห้องที่กำหนดไว้',
     search_auth: 'ระบบค้นเว็บปฏิเสธ API Key กรุณาให้ผู้ดูแลตั้งค่า Brave Search Key ใหม่',
     search_quota: 'ระบบค้นเว็บใช้โควตาครบแล้ว กรุณาลองใหม่ภายหลังหรือติดต่อผู้ดูแล',

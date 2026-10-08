@@ -32,6 +32,7 @@ test('concurrent asks and clear cannot race an active conversation', async () =>
   const { service } = fixture(() => new Promise(resolve => { finish = resolve; }));
   const pending = service.ask(c, 'hi');
   await assert.rejects(service.ask(c, 'again'), { code: 'busy' }); await assert.rejects(service.clear(c), { code: 'busy' });
+  await new Promise(resolve => setImmediate(resolve));
   finish('ok'); await pending;
 });
 test('message routing responds only to explicit mentions or configured channel', () => {
